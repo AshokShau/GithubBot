@@ -1,114 +1,170 @@
-# GitHub Telegram Notify
+# GitHub Webhook Bot for Telegram
 
-A powerful, lightweight Go application that forwards GitHub webhook events to Telegram chats with rich, customizable notifications.
+A robust Telegram bot that integrates with GitHub to send notifications, manage repositories, and interact with issues/PRs directly from your chat.
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FAshokShau%2Fgithub-telegram-notify)
+## Features
 
-This tool acts as a bridge between your GitHub repositories and your Telegram chats. It listens for over 40 different GitHub events—from code pushes and pull requests to security alerts and deployments—and transforms them into well-formatted, easy-to-read Telegram messages.
+*   **Real-time Notifications**: Receive instant updates for Pushes, Issues, Pull Requests, Reviews, Forks, Stars, and more.
+*   **Repository Management**: Add or remove repositories directly from Telegram (`/addrepo`, `/removerepo`).
+*   **Auto-Discovery**: Automatically find and link repositories you have access to.
+*   **Interactive Settings**: Configure which events to receive for each repository using a user-friendly inline menu (`/settings`).
+*   **Direct Interaction**:
+    *   **Reply to Threads**: Reply to a notification message in Telegram to post a comment on the corresponding GitHub Issue or PR.
+    *   **Commands**: Reply to a notification with `/close`, `/reopen`, or `/approve` to perform the action directly.
+    *   **Quick Actions**: Approve or Close Pull Requests via inline buttons (note: this feature is currently simplified).
+*   **Privacy & Security**:
+    *   Private chat only authentication (`/connect`).
+    *   Encrypted storage of OAuth tokens.
+    *   Role-based access control (Admin-only management commands).
+    *   Strict privacy policy (`/privacy`).
+*   **Stateless Webhooks**: Efficient handling of webhooks without database lookups for routing.
 
-It's designed for developers, DevOps engineers, and project managers who want to stay updated on repository activity without leaving their favorite messaging app.
+## Supported Events
 
-## 🌟 Features
+*   **Code**: Push events
+*   **Issues**: Open, close, reopen, edit, etc.
+*   **Pull requests**: Open, close, review, etc.
+*   **Wikis**: Gollum events
+*   **Settings**: Repository updates
+*   **Webhooks and services**: Meta events
+*   **Deploy keys**: Key management
+*   **Collaboration invites**: Member changes
+*   **Forks**: Fork events
+*   **Stars**: Watch events
 
-- **Comprehensive Event Support**: Get notified for over 40 GitHub event types.
-- **Rich Formatting**: Messages are parsed into Telegram's MarkdownV2 format, with emojis and interactive buttons.
-- **Easy to Deploy**: One-click deployment to Vercel, or run it anywhere Go is supported.
-- **Lightweight & Fast**: Built with Go for minimal resource consumption.
-- **Customizable**: Fork the repo to customize message formats and add your own logic.
-- **Open Source**: Licensed under the MIT license.
+## Prerequisites
 
-## 🛠️ Supported Events
+*   **Go**: v1.23 or higher
+*   **Docker & Docker Compose**: For containerized deployment.
+*   **MongoDB**: v5.0+ (Provided via Docker Compose).
+*   **Telegram Bot Token**: Get one from [@BotFather](https://t.me/BotFather).
+*   **GitHub OAuth App**: Create one in Developer Settings.
+    *   **Homepage URL**: Your bot's URL (e.g., `https://your-domain.com`).
+    *   **Authorization callback URL**: `https://your-domain.com/oauth/callback`.
 
-This webhook supports a wide range of GitHub events, including:
+## Configuration
 
-- **Code & Repository**: `push`, `release`, `fork`, `repository`
-- **Pull Requests**: `pull_request`
-- **Issues**: `issues`, `issue_comment`
-- **Discussions**: `discussion`, `discussion_comment`
-- **CI/CD & Deployments**: `deployment`, `deployment_status`, `workflow_job`, `workflow_run`, `workflow_dispatch`
-- **Security**: `repository_vulnerability_alert`, `secret_scanning_alert`
-- **And many more...**
+Copy `sample.env` to `.env` and configure the following variables:
 
-A full list of supported events can be found in the `src/utils/githubEvents.go` file.
+```dotenv
+# --- Telegram ---
+# Your Telegram Bot Token
+TELEGRAM_TOKEN=123456:ABC-DEF...
+# Public URL where the bot is reachable
+TELEGRAM_WEBHOOK_URL=https://your-domain.com
 
-## 🚀 Getting Started
+# --- GitHub OAuth ---
+# From your GitHub OAuth App
+GITHUB_CLIENT_ID=Iv1...
+# From your GitHub OAuth App
+GITHUB_CLIENT_SECRET=0123...
 
-### Prerequisites
+# --- Webhooks ---
+# A strong random string shared between GitHub and the bot to validate payloads. (openssl rand -hex 16)
+GITHUB_WEBHOOK_SECRET=your_webhook_secret_here
 
-- **Go**: Version 1.20 or higher (for local development).
-- **Telegram Bot Token**: You can get one from [@BotFather](https://core.telegram.org/bots#6-botfather).
-- **GitHub Repository**: You'll need admin access to the repository you want to monitor.
+# --- Database ---
+MONGODB_URI=mongodb://mongo:27017
+DATABASE_NAME=github_bot
 
-### Local Development
+# --- Security ---
+# 32-byte (64 hex chars) string for encrypting tokens in the DB.
+# Generate with: openssl rand -hex 32
+ENCRYPTION_KEY=a1b2c3d4...
 
-1.  **Clone the repository**:
-    ```bash
-    git clone https://github.com/AshokShau/github-telegram-notify.git
-    cd github-telegram-notify
-    ```
-
-2.  **Set up environment variables**:
-    Create a `.env` file in the root of the project and add your Telegram bot token:
-    ```
-    TOKEN=YOUR_TELEGRAM_BOT_TOKEN
-    ```
-
-3.  **Run the application**:
-    ```bash
-    go run main.go
-    ```
-    The server will start on port `3000` by default.
-
-4.  **Expose your local server**:
-    To receive webhooks from GitHub, you'll need to expose your local server to the internet. We recommend using a tool like [ngrok](https://ngrok.com/):
-    ```bash
-    ngrok http 3000
-    ```
-    This will give you a public URL that you can use for your GitHub webhook.
-
-### GitHub Webhook Configuration
-
-1.  Go to your GitHub repository's **Settings > Webhooks**.
-2.  Click **Add webhook**.
-3.  **Payload URL**: Enter the URL from ngrok, followed by `/github?chat_id=YOUR_CHAT_ID`. Replace `YOUR_CHAT_ID` with the ID of the Telegram chat where you want to receive notifications.
-4.  **Content type**: Select `application/json`.
-5.  **Secret**: (Optional) You can add a webhook secret for added security.
-6.  **Which events would you like to trigger this webhook?**: Select the events you want to be notified about.
-7.  Click **Add webhook**.
-
-## 🌐 Deployment
-
-### Vercel (Recommended)
-
-The easiest way to deploy this application is with Vercel.
-
-1.  **Fork this repository**.
-2.  Click the **Deploy with Vercel** button at the top of this README.
-3.  In your Vercel project settings, add your `BOT_TOKEN` as an environment variable.
-4.  Deploy!
-
-### Manual Deployment
-
-You can also build the application and run it as a binary on any server:
-
-```bash
-go build -o gh-telegram
-./gh-telegram
+# --- Server ---
+PORT=8080
 ```
 
-## 🤝 Contributing
+## Installation & Deployment
 
-Contributions are welcome! If you'd like to help improve this project, please:
+### Using Docker Compose (Recommended)
 
-1.  Fork the repository.
-2.  Create a new branch for your feature or bug fix.
-3.  Submit a pull request with a clear description of your changes.
+1.  **Clone the repository:**
+    ```bash
+    git clone https://github.com/AshokShau/GithubBot.git
+    cd GithubBot
+    ```
 
-## 📜 License
+2.  **Setup Environment:**
+    ```bash
+    cp sample.env .env
+    # Edit .env with your credentials
+    ```
 
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+3.  **Run the application:**
+    ```bash
+    docker-compose up -d --build
+    ```
 
-## 💬 Support
+4.  **Verify:**
+    The bot should be running on `http://localhost:8080`. GitHub will send webhooks to `https://your-domain.com/webhook/...`.
 
-- **Demo Bot**: [@FallenAlertBot](https://t.me/FallenAlertBot)
-- **Updates Channel**: [@FallenProjects](https://t.me/FallenProjects)
+### Manual Build
+
+1.  Install dependencies: `go mod download`
+2.  Build the binary: `go build -o bot cmd/bot/main.go`
+3.  Run: `./bot`
+
+## Usage
+
+1.  **Start the bot**: Send `/start` to your bot.
+2.  **Connect GitHub**: Send `/connect` (in a private chat) to authenticate with GitHub.
+3.  **Add a Repository**:
+    *   Group Chat: `/addrepo owner/repo`
+    *   Or use `/addrepo` without arguments to browse your repositories interactively.
+4.  **Configure Notifications**:
+    *   Send `/settings` to view linked repositories.
+    *   Select a repository to customize events (e.g., enable "Issues" but disable "Stars").
+5.  **Interact**:
+    *   When you receive an issue notification, simply **reply** to that message in Telegram to post a comment on GitHub.
+
+## Commands
+
+*   `/start` - Start the bot and see the welcome message.
+*   `/help` - Show available commands and help text.
+*   `/connect` - Connect your GitHub account (Private chat only).
+*   `/addrepo [owner/repo]` - Link a repository to the current chat.
+*   `/removerepo [owner/repo]` - Unlink a repository.
+*   `/settings` - Manage notification settings for linked repositories.
+*   `/repos` - List all repositories linked to the current chat.
+*   `/privacy` - View the privacy policy.
+*   `/logout` - Disconnect your GitHub account.
+*   `/reload` - Refresh admin cache (Admin only).
+*   `/close` - Close an issue or PR (reply to notification).
+*   `/reopen` - Reopen an issue or PR (reply to notification).
+*   `/approve` - Approve a PR (reply to notification).
+
+## Architecture
+
+*   **Bot Framework**: `gotgbot` for Telegram Bot API.
+*   **GitHub Integration**: `go-github` for API calls and webhook handling.
+*   **Database**: MongoDB for storing user tokens (encrypted) and chat-repo links.
+*   **Security**: AES-GCM encryption for stored OAuth tokens.
+*   **Stateless Webhooks**: The webhook URL path contains an encrypted token representing the Chat ID, allowing the bot to route events without database lookups during the webhook request.
+
+## Contributing
+
+Pull requests are welcome! Please ensure you follow the coding standards and update tests as appropriate.
+
+## License
+
+This project is licensed under the MIT License - see the `LICENSE` file for details.
+
+---
+
+## 🛠 BT / Support
+
+**Maintained by:** [AshokShau](https://github.com/AshokShau)  
+**Telegram:** https://t.me/FallenProjects
+
+### 🐞 Bug / Issue Tracking (BT)
+- Found a bug or unexpected behavior?
+- Please open a **GitHub Issue** with proper logs/details.
+
+### 💬 Support
+- General support & updates are shared on [Telegram](https://t.me/FallenProjects).
+
+---
+
+⭐ If this project helps you, consider giving it a star.

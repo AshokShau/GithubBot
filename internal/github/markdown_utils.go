@@ -1,4 +1,4 @@
-package utils
+package github
 
 import (
 	"fmt"
@@ -9,6 +9,7 @@ import (
 	"github.com/JohannesKaufmann/html-to-markdown/v2/converter"
 	"github.com/JohannesKaufmann/html-to-markdown/v2/plugin/strikethrough"
 	"github.com/JohannesKaufmann/html-to-markdown/v2/plugin/table"
+	"github.com/PaulSonOfLars/gotgbot/v2"
 )
 
 // ConvertHTMLToMarkdown converts HTML to Markdown using the html-to-markdown library.
@@ -32,6 +33,7 @@ func ConvertHTMLToMarkdown(html string) string {
 // EscapeMarkdownV2 escapes characters for Telegram's MarkdownV2 format.
 func EscapeMarkdownV2(text string) string {
 	replacer := strings.NewReplacer(
+		"\\", "\\\\", // Escape backslash first!
 		"_", "\\_",
 		"*", "\\*",
 		"[", "\\[",
@@ -119,11 +121,30 @@ func FormatReleaseBody(body string) string {
 		finalBody.WriteString(">" + lines[i] + "\n")
 	}
 
-	finalBody.WriteString("**>\n")
+	finalBody.WriteString("||\n")
 
 	for i := splitIndex; i < len(lines); i++ {
 		finalBody.WriteString(">" + lines[i] + "\n")
 	}
 
 	return strings.TrimSuffix(finalBody.String(), "\n") + "||"
+}
+
+func FormatRepo(repoFullName string) string {
+	return fmt.Sprintf("[%s](https://github.com/%s)", EscapeMarkdownV2(repoFullName), EscapeMarkdownV2URL(repoFullName))
+}
+
+func FormatUser(userLogin string) string {
+	return fmt.Sprintf("[%s](https://github.com/%s)", EscapeMarkdownV2(userLogin), EscapeMarkdownV2URL(userLogin))
+}
+
+func FormatMessageWithButton(message, buttonText, buttonURL string) (string, *gotgbot.InlineKeyboardMarkup) {
+	if buttonText == "" || buttonURL == "" {
+		return message, nil
+	}
+	return message, &gotgbot.InlineKeyboardMarkup{
+		InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
+			{{Text: buttonText, Url: buttonURL}},
+		},
+	}
 }
