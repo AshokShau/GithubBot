@@ -1,0 +1,5 @@
+services:
+  github-bot:
+    build: .
+    restart: always
+    env_file: .env
