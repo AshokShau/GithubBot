@@ -2,6 +2,7 @@ package callbacks
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -351,7 +352,7 @@ func (h *CallbackHandler) showIndividualEvents(b *gotgbot.Bot, ctx *ext.Context,
 		}
 
 		// c:te:repo:shortEvt:page
-		cbData := fmt.Sprintf("c:te:%s:%s:1", l.RepoFullName, e.Short)
+		cbData := fmt.Sprintf("c:te:%s:%s:%d", l.RepoFullName, e.Short, page)
 		btnText := fmt.Sprintf("%s %s", status, e.Label)
 
 		row = append(row, gotgbot.InlineKeyboardButton{Text: btnText, CallbackData: cbData})
@@ -617,7 +618,8 @@ func (h *CallbackHandler) HandlePRAction(b *gotgbot.Bot, ctx *ext.Context) error
 }
 
 func (h *CallbackHandler) handleAuthError(b *gotgbot.Bot, ctx *ext.Context, err error) bool {
-	if errResp, ok := err.(*gh.ErrorResponse); ok {
+	var errResp *gh.ErrorResponse
+	if errors.As(err, &errResp) {
 		if errResp.Response.StatusCode == http.StatusUnauthorized || errResp.Response.StatusCode == http.StatusForbidden {
 			_ = h.DB.ClearUserToken(context.Background(), ctx.EffectiveUser.Id)
 			_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "GitHub auth error. Token revoked or expired.", ShowAlert: true})
