@@ -331,25 +331,46 @@ func (h *CommandHandler) RemoveRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	repoFullName := args[1]
 	link, err := h.DB.GetRepoLink(context.Background(), ctx.EffectiveChat.Id, repoFullName)
-	if err == nil && link.WebhookID != 0 {
+	if err != nil {
+		_, err := ctx.EffectiveMessage.Reply(b, "Error finding repository link or not found.", nil)
+		return err
+	}
+
+	var webhookStatusMsg string
+
+	if link.WebhookID != 0 {
 		user, uErr := h.DB.GetUserByTelegramID(context.Background(), ctx.EffectiveUser.Id)
-		if uErr == nil && user.EncryptedOAuthToken != "" {
-			token, _ := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
-			client := h.ClientFactory.GetUserClient(context.Background(), token)
+		if uErr != nil || user.EncryptedOAuthToken == "" {
+			webhookStatusMsg = "\n\n⚠️ <b>Warning:</b> You are not connected to GitHub. The webhook could not be removed from the repository settings. Please remove it manually."
+		} else {
+			token, decErr := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
+			if decErr != nil {
+				webhookStatusMsg = "\n\n⚠️ <b>Warning:</b> Could not decrypt your access token. Webhook not removed from GitHub."
+			} else {
+				client := h.ClientFactory.GetUserClient(context.Background(), token)
 
-			var owner, repo string
-			for i := 0; i < len(repoFullName); i++ {
-				if repoFullName[i] == '/' {
-					owner = repoFullName[:i]
-					repo = repoFullName[i+1:]
-					break
+				var owner, repo string
+				for i := 0; i < len(repoFullName); i++ {
+					if repoFullName[i] == '/' {
+						owner = repoFullName[:i]
+						repo = repoFullName[i+1:]
+						break
+					}
 				}
-			}
 
-			if owner != "" && repo != "" {
-				_, err := client.Repositories.DeleteHook(context.Background(), owner, repo, link.WebhookID)
-				if err != nil {
-					_ = h.handleAuthError(b, ctx, err)
+				if owner != "" && repo != "" {
+					_, err := client.Repositories.DeleteHook(context.Background(), owner, repo, link.WebhookID)
+					if err != nil {
+						if h.handleAuthError(b, ctx, err) {
+							webhookStatusMsg = "\n\n⚠️ <b>Warning:</b> GitHub authentication failed. Webhook not removed."
+						} else {
+							var errResp *github.ErrorResponse
+							if errors.As(err, &errResp) && errResp.Response.StatusCode == http.StatusNotFound {
+							} else {
+								webhookStatusMsg = fmt.Sprintf("\n\n⚠️ <b>Warning:</b> Failed to remove webhook from GitHub: %v", err)
+							}
+						}
+					}
 				}
 			}
 		}
@@ -357,11 +378,11 @@ func (h *CommandHandler) RemoveRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	err = h.DB.RemoveRepoLink(context.Background(), ctx.EffectiveChat.Id, repoFullName)
 	if err != nil {
-		_, err := ctx.EffectiveMessage.Reply(b, "Error removing repository or not found.", nil)
+		_, err := ctx.EffectiveMessage.Reply(b, "Error removing repository from database.", nil)
 		return err
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Repository <b>%s</b> removed successfully.", repoFullName), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Repository <b>%s</b> removed successfully.%s", repoFullName, webhookStatusMsg), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 	return err
 }
 
@@ -486,7 +507,8 @@ func (h *CommandHandler) Logout(b *gotgbot.Bot, ctx *ext.Context) error {
 }
 
 func (h *CommandHandler) handleAuthError(b *gotgbot.Bot, ctx *ext.Context, err error) bool {
-	if errResp, ok := err.(*github.ErrorResponse); ok {
+	var errResp *github.ErrorResponse
+	if errors.As(err, &errResp) {
 		if errResp.Response.StatusCode == http.StatusUnauthorized || errResp.Response.StatusCode == http.StatusForbidden {
 			_ = h.DB.ClearUserToken(context.Background(), ctx.EffectiveUser.Id)
 			msg := "⚠️ <b>GitHub authentication failed.</b>\nIt seems your token has expired or was revoked. Please /connect again."
