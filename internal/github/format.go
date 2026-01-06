@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
-	"github.com/google/go-github/v80/github"
+	"github.com/google/go-github/v81/github"
 )
 
 func FormatIssuesEvent(event *github.IssuesEvent) (string, *gotgbot.InlineKeyboardMarkup) {
@@ -1141,10 +1141,13 @@ func FormatProjectV2ItemEvent(e *github.ProjectV2ItemEvent) (string, *gotgbot.In
 		EscapeMarkdownV2(org.GetLogin()),
 		FormatUser(sender.GetLogin()),
 	)
-	if item.GetContentType() == "PullRequest" {
+	contentType := item.GetContentType()
+	if contentType != nil && *contentType == github.ProjectV2ItemContentTypePullRequest {
 		msg += fmt.Sprintf("*Pull Request:* %s\n", item.GetContentNodeID())
-	} else if item.GetContentType() == "Issue" {
+	} else if contentType != nil && *contentType == github.ProjectV2ItemContentTypeIssue {
 		msg += fmt.Sprintf("*Issue:* %s\n", item.GetContentNodeID())
+	} else if contentType != nil && *contentType == github.ProjectV2ItemContentTypeDraftIssue {
+		msg += fmt.Sprintf("*Draft Issue:* %s\n", item.GetContentNodeID())
 	}
 
 	return FormatMessageWithButton(msg, "View Item", item.GetProjectURL())

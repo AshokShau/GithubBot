@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/JohannesKaufmann/html-to-markdown/v2 v2.5.0
 	github.com/PaulSonOfLars/gotgbot/v2 v2.0.0-rc.33.0.20251231165211-783b714e8207
-	github.com/google/go-github/v80 v80.0.0
+	github.com/google/go-github/v81 v81.0.0
 	github.com/joho/godotenv v1.5.1
 	go.mongodb.org/mongo-driver/v2 v2.4.1
 	golang.org/x/oauth2 v0.34.0
