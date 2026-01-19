@@ -719,26 +719,20 @@ func FormatStarEvent(e *github.StarEvent) (string, *gotgbot.InlineKeyboardMarkup
 	if action == "deleted" {
 		emoji = "❌"
 		actionText = "unstarred"
-	} else {
-		emoji = "❌"
-		action = "unknown"
 	}
 
 	user := e.GetSender().GetLogin()
-	userURL := e.GetSender().GetHTMLURL()
 	repo := e.GetRepo().GetFullName()
 	repoURL := e.GetRepo().GetHTMLURL()
 	stars := e.GetRepo().GetStargazersCount()
 	forks := e.GetRepo().GetForksCount()
 
 	msg := fmt.Sprintf(
-		"%s %s (%s) %s %s (%s)\n\n✨ Stars: %d | 🍴 Forks: %d",
+		"%s %s %s %s\n\n✨ Stars: %d \\| 🍴 Forks: %d",
 		emoji,
-		EscapeMarkdownV2(user),
-		EscapeMarkdownV2(userURL),
+		FormatUser(user),
 		EscapeMarkdownV2(actionText),
-		EscapeMarkdownV2(repo),
-		EscapeMarkdownV2(repoURL),
+		FormatRepo(repo),
 		stars,
 		forks,
 	)
