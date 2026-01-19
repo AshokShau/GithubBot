@@ -472,20 +472,17 @@ func FormatWatchEvent(event *github.WatchEvent) (string, *gotgbot.InlineKeyboard
 	action := event.GetAction()
 	log.Printf("Watch action: %s", action)
 	if action == "started" {
-		return "", nil
-		/*
-			repo := event.GetRepo()
-			msg := fmt.Sprintf(
-				"⭐ %s starred %s\n\n"+
-					"✨ *Stars:* %d \\| 🍴 *Forks:* %d",
-				FormatUser(event.GetSender().GetLogin()),
-				FormatRepo(repo.GetFullName()),
-				repo.GetStargazersCount(),
-				repo.GetForksCount(),
-			)
-			return FormatMessageWithButton(msg, "View Repository", event.GetRepo().GetHTMLURL())
+		repo := event.GetRepo()
+		msg := fmt.Sprintf(
+			"⭐ %s starred %s\n\n"+
+				"✨ *Stars:* %d \\| 🍴 *Forks:* %d",
+			FormatUser(event.GetSender().GetLogin()),
+			FormatRepo(repo.GetFullName()),
+			repo.GetStargazersCount(),
+			repo.GetForksCount(),
+		)
+		return FormatMessageWithButton(msg, "View Repository", event.GetRepo().GetHTMLURL())
 
-		*/
 	}
 
 	msg := fmt.Sprintf(
