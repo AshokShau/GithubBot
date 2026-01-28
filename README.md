@@ -153,16 +153,16 @@ This project is licensed under the MIT License - see the `LICENSE` file for deta
 
 ---
 
-## 🛠 BT / Support
+## BT / Support
 
 **Maintained by:** [AshokShau](https://github.com/AshokShau)  
 **Telegram:** https://t.me/FallenProjects
 
-### 🐞 Bug / Issue Tracking (BT)
+### Bug / Issue Tracking (BT)
 - Found a bug or unexpected behavior?
 - Please open a **GitHub Issue** with proper logs/details.
 
-### 💬 Support
+### Support
 - General support & updates are shared on [Telegram](https://t.me/FallenProjects).
 
 ---
