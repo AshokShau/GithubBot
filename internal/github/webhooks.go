@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -16,7 +17,7 @@ import (
 	"github-webhook/internal/utils"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
-	"github.com/google/go-github/v81/github"
+	"github.com/google/go-github/v82/github"
 )
 
 type WebhookServer struct {
@@ -105,6 +106,8 @@ func (s *WebhookServer) processEvent(event interface{}, chatID int64, hookID int
 		return
 	}
 
+	msg = normalizeMessage(msg)
+
 	opts := &gotgbot.SendMessageOpts{
 		ParseMode: "MarkdownV2",
 		LinkPreviewOptions: &gotgbot.LinkPreviewOptions{
@@ -120,6 +123,25 @@ func (s *WebhookServer) processEvent(event interface{}, chatID int64, hookID int
 	}
 
 	s.storeMessageContext(sentMsg.MessageId, chatID, event)
+}
+
+// normalizeMessage trims trailing spaces on each line, collapses 3+ consecutive newlines into 2
+func normalizeMessage(s string) string {
+	if s == "" {
+		return s
+	}
+
+	lines := strings.Split(s, "\n")
+	for i, ln := range lines {
+		lines[i] = strings.TrimRight(ln, " \t")
+	}
+	out := strings.Join(lines, "\n")
+
+	re := regexp.MustCompile(`\n{3,}`)
+	out = re.ReplaceAllString(out, "\n\n")
+
+	out = strings.TrimSpace(out)
+	return out
 }
 
 func (s *WebhookServer) storeMessageContext(messageID int64, chatID int64, event interface{}) {
