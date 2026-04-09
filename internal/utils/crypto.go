@@ -33,7 +33,7 @@ func Encrypt(plainText, keyString string) (string, error) {
 	}
 
 	ciphertext := aesGCM.Seal(nonce, nonce, []byte(plainText), nil)
-	return base64.StdEncoding.EncodeToString(ciphertext), nil
+	return base64.URLEncoding.EncodeToString(ciphertext), nil
 }
 
 // Decrypt decrypts base64 encoded ciphertext using AES-GCM
@@ -43,9 +43,12 @@ func Decrypt(encryptedText, keyString string) (string, error) {
 		return "", err
 	}
 
-	data, err := base64.StdEncoding.DecodeString(encryptedText)
+	data, err := base64.URLEncoding.DecodeString(encryptedText)
 	if err != nil {
-		return "", err
+		data, err = base64.StdEncoding.DecodeString(encryptedText)
+		if err != nil {
+			return "", err
+		}
 	}
 
 	block, err := aes.NewCipher(key)

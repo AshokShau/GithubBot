@@ -62,6 +62,52 @@ func TestEncryptDecrypt(t *testing.T) {
 	}
 }
 
+func TestEncoding(t *testing.T) {
+	key := "12345678901234567890123456789012"
+	plainText := "test text"
+
+	// Run multiple times to account for random nonce
+	for i := 0; i < 100; i++ {
+		encrypted, err := Encrypt(plainText, key)
+		if err != nil {
+			t.Fatalf("Encrypt() error = %v", err)
+		}
+
+		for _, char := range encrypted {
+			if char == '/' || char == '+' {
+				t.Errorf("Iteration %d: Encrypted text contains non-URL-safe character: %c in %s", i, char, encrypted)
+			}
+		}
+
+		decrypted, err := Decrypt(encrypted, key)
+		if err != nil {
+			t.Fatalf("Iteration %d: Decrypt() error = %v", i, err)
+		}
+		if decrypted != plainText {
+			t.Errorf("Iteration %d: Decrypted = %v, want %v", i, decrypted, plainText)
+		}
+	}
+}
+
+func TestBackwardCompatibility(t *testing.T) {
+	key := "12345678901234567890123456789012"
+	plainText := "backward compatibility test"
+
+	encryptedStd, err := EncryptStd(plainText, key)
+	if err != nil {
+		t.Fatalf("EncryptStd() error = %v", err)
+	}
+
+	decrypted, err := Decrypt(encryptedStd, key)
+	if err != nil {
+		t.Fatalf("Decrypt() error = %v", err)
+	}
+
+	if decrypted != plainText {
+		t.Errorf("Decrypt() = %v, want %v", decrypted, plainText)
+	}
+}
+
 func TestDecryptErrors(t *testing.T) {
 	key := "12345678901234567890123456789012"
 
@@ -73,7 +119,6 @@ func TestDecryptErrors(t *testing.T) {
 	})
 
 	t.Run("Short ciphertext", func(t *testing.T) {
-		// Valid base64 but too short
 		_, err := Decrypt("SHORT", key)
 		if err == nil {
 			t.Error("Decrypt() expected error for short ciphertext")
