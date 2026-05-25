@@ -20,7 +20,7 @@ import (
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
-	"github.com/google/go-github/v84/github"
+	"github.com/google/go-github/v86/github"
 )
 
 type CommandHandler struct {
@@ -132,8 +132,7 @@ func (h *CommandHandler) AddRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 		if h.handleAuthError(b, ctx, getErr) {
 			return nil
 		}
-		var errResp *github.ErrorResponse
-		if errors.As(getErr, &errResp) && errResp.Response.StatusCode == http.StatusNotFound {
+		if errResp, ok := errors.AsType[*github.ErrorResponse](getErr); ok && errResp.Response.StatusCode == http.StatusNotFound {
 			_, _ = ctx.EffectiveMessage.Reply(b, "❌ <b>Repository not found.</b>\nPlease check the name and ensure you have access.", &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 			return nil
 		}
@@ -171,8 +170,7 @@ func (h *CommandHandler) AddRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 		if h.handleAuthError(b, ctx, hookErr) {
 			return nil
 		}
-		var errResp *github.ErrorResponse
-		if errors.As(hookErr, &errResp) && errResp.Response.StatusCode == http.StatusNotFound {
+		if errResp, ok := errors.AsType[*github.ErrorResponse](hookErr); ok && errResp.Response.StatusCode == http.StatusNotFound {
 			safeRepoName := html.EscapeString(repoFullName)
 			msg := fmt.Sprintf("❌ <b>Insufficient permissions.</b>\nYou need admin access to repository <b>%s</b> to create webhooks.", safeRepoName)
 			_, err := ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
@@ -364,8 +362,7 @@ func (h *CommandHandler) RemoveRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 						if h.handleAuthError(b, ctx, err) {
 							webhookStatusMsg = "\n\n⚠️ <b>Warning:</b> GitHub authentication failed. Webhook not removed."
 						} else {
-							var errResp *github.ErrorResponse
-							if errors.As(err, &errResp) && errResp.Response.StatusCode == http.StatusNotFound {
+							if errResp, ok := errors.AsType[*github.ErrorResponse](err); ok && errResp.Response.StatusCode == http.StatusNotFound {
 							} else {
 								webhookStatusMsg = fmt.Sprintf("\n\n⚠️ <b>Warning:</b> Failed to remove webhook from GitHub: %v", err)
 							}
@@ -507,8 +504,7 @@ func (h *CommandHandler) Logout(b *gotgbot.Bot, ctx *ext.Context) error {
 }
 
 func (h *CommandHandler) handleAuthError(b *gotgbot.Bot, ctx *ext.Context, err error) bool {
-	var errResp *github.ErrorResponse
-	if errors.As(err, &errResp) {
+	if errResp, ok := errors.AsType[*github.ErrorResponse](err); ok {
 		if errResp.Response.StatusCode == http.StatusUnauthorized || errResp.Response.StatusCode == http.StatusForbidden {
 			_ = h.DB.ClearUserToken(context.Background(), ctx.EffectiveUser.Id)
 			msg := "⚠️ <b>GitHub authentication failed.</b>\nIt seems your token has expired or was revoked. Please /connect again."

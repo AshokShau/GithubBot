@@ -18,7 +18,7 @@ import (
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
-	gh "github.com/google/go-github/v84/github"
+	gh "github.com/google/go-github/v86/github"
 )
 
 type CallbackHandler struct {
@@ -600,8 +600,7 @@ func (h *CallbackHandler) HandlePRAction(b *gotgbot.Bot, ctx *ext.Context) error
 		_, _, err = client.PullRequests.CreateReview(ctxBg, owner, repo, prNum, &gh.PullRequestReviewRequest{Event: gh.String("APPROVE")})
 		msg = "Approved!"
 	case "close":
-		state := "closed"
-		_, _, err = client.PullRequests.Edit(ctxBg, owner, repo, prNum, &gh.PullRequest{State: &state})
+		_, _, err = client.PullRequests.Edit(ctxBg, owner, repo, prNum, &gh.PullRequest{State: new("closed")})
 		msg = "Closed!"
 	}
 
@@ -618,8 +617,7 @@ func (h *CallbackHandler) HandlePRAction(b *gotgbot.Bot, ctx *ext.Context) error
 }
 
 func (h *CallbackHandler) handleAuthError(b *gotgbot.Bot, ctx *ext.Context, err error) bool {
-	var errResp *gh.ErrorResponse
-	if errors.As(err, &errResp) {
+	if errResp, ok := errors.AsType[*gh.ErrorResponse](err); ok {
 		if errResp.Response.StatusCode == http.StatusUnauthorized || errResp.Response.StatusCode == http.StatusForbidden {
 			_ = h.DB.ClearUserToken(context.Background(), ctx.EffectiveUser.Id)
 			_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "GitHub auth error. Token revoked or expired.", ShowAlert: true})
