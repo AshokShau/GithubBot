@@ -46,7 +46,7 @@ func Load() *Config {
 
 	return &Config{
 		TelegramToken:       os.Getenv("TELEGRAM_TOKEN"),
-		TelegramWebhookURL:  os.Getenv("TELEGRAM_WEBHOOK_URL"),
+		TelegramWebhookURL:  strings.TrimRight(os.Getenv("TELEGRAM_WEBHOOK_URL"), "/"),
 		MongoDBURI:          os.Getenv("MONGODB_URI"),
 		DatabaseName:        getEnv("DATABASE_NAME", "github_bot"),
 		GitHubWebhookSecret: os.Getenv("GITHUB_WEBHOOK_SECRET"),
