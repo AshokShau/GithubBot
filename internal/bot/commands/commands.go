@@ -140,7 +140,12 @@ func (h *CommandHandler) AddRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 
-	token, encErr := utils.Encrypt(fmt.Sprintf("%d", ctx.EffectiveChat.Id), h.EncryptionKey)
+	payload := fmt.Sprintf("%d", ctx.EffectiveChat.Id)
+	if ctx.EffectiveMessage.MessageThreadId != 0 {
+		payload = fmt.Sprintf("%d:%d", ctx.EffectiveChat.Id, ctx.EffectiveMessage.MessageThreadId)
+	}
+
+	token, encErr := utils.Encrypt(payload, h.EncryptionKey)
 	if encErr != nil {
 		_, _ = ctx.EffectiveMessage.Reply(b, "Error generating webhook token.", nil)
 		return nil

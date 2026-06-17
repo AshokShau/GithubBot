@@ -42,17 +42,20 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 	//log.Printf("Received webhook request: %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
 	// Path: /webhook/<token>
 	var chatID int64
+	var topicID int64
 	path := r.URL.Path
 	if strings.HasPrefix(path, "/webhook/") && len(path) > 9 {
 		token := path[9:] // strip "/webhook/"
 		decrypted, err := utils.Decrypt(token, s.Config.EncryptionKey)
 		if err == nil {
-			id, err := strconv.ParseInt(decrypted, 10, 64)
-			if err == nil {
-				chatID = id
-				// log.Printf("Decrypted Chat ID from token: %d", chatID)
+			if strings.Contains(decrypted, ":") {
+				parts := strings.Split(decrypted, ":")
+				if len(parts) == 2 {
+					chatID, _ = strconv.ParseInt(parts[0], 10, 64)
+					topicID, _ = strconv.ParseInt(parts[1], 10, 64)
+				}
 			} else {
-				log.Printf("Failed to parse decrypted token as int64: %v", err)
+				chatID, _ = strconv.ParseInt(decrypted, 10, 64)
 			}
 		} else {
 			log.Printf("Failed to decrypt webhook token: %v", err)
@@ -84,11 +87,11 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 		hookID, _ = strconv.ParseInt(idStr, 10, 64)
 	}
 
-	go s.processEvent(event, chatID, hookID)
+	go s.processEvent(event, chatID, topicID, hookID)
 	w.WriteHeader(http.StatusOK)
 }
 
-func (s *WebhookServer) processEvent(event interface{}, chatID int64, hookID int64) {
+func (s *WebhookServer) processEvent(event interface{}, chatID int64, topicID int64, hookID int64) {
 	if e, ok := event.(*github.RepositoryEvent); ok && e.GetAction() == "renamed" {
 		newFullName := e.GetRepo().GetFullName()
 		if newFullName != "" && hookID != 0 {
@@ -107,9 +110,9 @@ func (s *WebhookServer) processEvent(event interface{}, chatID int64, hookID int
 	}
 
 	msg = normalizeMessage(msg)
-
 	opts := &gotgbot.SendMessageOpts{
-		ParseMode: "MarkdownV2",
+		ParseMode:       "MarkdownV2",
+		MessageThreadId: topicID,
 		LinkPreviewOptions: &gotgbot.LinkPreviewOptions{
 			IsDisabled: true,
 		},
