@@ -56,7 +56,12 @@ func (h *ReplyHandler) HandleReply(b *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 
-	client := h.ClientFactory.GetUserClient(context.Background(), token)
+	client, err := h.ClientFactory.GetUserClient(context.Background(), token)
+	if err != nil {
+		fmt.Printf("Failed to create GitHub client: %v\n", err)
+		return nil
+	}
+
 	if mContext.Type == "pr_review_comment" && mContext.CommentID != 0 {
 		comment := &gh.PullRequestComment{
 			Body:      &commentBody,

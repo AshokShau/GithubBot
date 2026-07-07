@@ -132,7 +132,11 @@ func (h *CallbackHandler) HandleSettings(b *gotgbot.Bot, ctx *ext.Context) error
 				return nil
 			}
 
-			client := h.ClientFactory.GetUserClient(context.Background(), token)
+			client, err := h.ClientFactory.GetUserClient(context.Background(), token)
+			if err != nil {
+				_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Failed to create GitHub client.", ShowAlert: true})
+				return nil
+			}
 			repoParts := strings.Split(link.RepoFullName, "/")
 			if len(repoParts) != 2 {
 				return nil
@@ -249,7 +253,11 @@ func (h *CallbackHandler) handlePresets(b *gotgbot.Bot, ctx *ext.Context, l *mod
 		return nil
 	}
 
-	client := h.ClientFactory.GetUserClient(context.Background(), token)
+	client, err := h.ClientFactory.GetUserClient(context.Background(), token)
+	if err != nil {
+		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Failed to create GitHub client.", ShowAlert: true})
+		return nil
+	}
 	repoParts := strings.Split(l.RepoFullName, "/")
 	if len(repoParts) != 2 {
 		return nil
@@ -293,7 +301,7 @@ func (h *CallbackHandler) handlePresets(b *gotgbot.Bot, ctx *ext.Context, l *mod
 		{{Text: "🔙 Back", CallbackData: fmt.Sprintf("c:r:%s", l.RepoFullName)}},
 	}
 
-	_, _, err := ctx.EffectiveMessage.EditText(b, responseText, &gotgbot.EditMessageTextOpts{
+	_, _, err = ctx.EffectiveMessage.EditText(b, responseText, &gotgbot.EditMessageTextOpts{
 		ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: kb},
 		ParseMode:   "HTML",
 	})
@@ -313,7 +321,11 @@ func (h *CallbackHandler) showIndividualEvents(b *gotgbot.Bot, ctx *ext.Context,
 		return nil
 	}
 
-	client := h.ClientFactory.GetUserClient(context.Background(), token)
+	client, err := h.ClientFactory.GetUserClient(context.Background(), token)
+	if err != nil {
+		_, _, _ = ctx.EffectiveMessage.EditText(b, "Failed to create GitHub client.", nil)
+		return nil
+	}
 	parts := strings.Split(l.RepoFullName, "/")
 	if len(parts) != 2 {
 		return nil
@@ -417,7 +429,11 @@ func (h *CallbackHandler) handleRepoPage(b *gotgbot.Bot, ctx *ext.Context, page 
 		return nil
 	}
 
-	client := h.ClientFactory.GetUserClient(context.Background(), token)
+	client, err := h.ClientFactory.GetUserClient(context.Background(), token)
+	if err != nil {
+		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Failed to create GitHub client.", ShowAlert: true})
+		return nil
+	}
 	opts := &gh.RepositoryListOptions{
 		Sort:        "updated",
 		Direction:   "desc",
@@ -487,7 +503,11 @@ func (h *CallbackHandler) handleAddRepoByID(b *gotgbot.Bot, ctx *ext.Context, re
 	}
 
 	token, _ := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
-	client := h.ClientFactory.GetUserClient(context.Background(), token)
+	client, err := h.ClientFactory.GetUserClient(context.Background(), token)
+	if err != nil {
+		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Failed to create GitHub client.", ShowAlert: true})
+		return nil
+	}
 
 	repo, _, err := client.Repositories.GetByID(context.Background(), repoID)
 	if err != nil {
@@ -590,7 +610,11 @@ func (h *CallbackHandler) HandlePRAction(b *gotgbot.Bot, ctx *ext.Context) error
 		return nil
 	}
 
-	client := h.ClientFactory.GetUserClient(context.Background(), token)
+	client, err := h.ClientFactory.GetUserClient(context.Background(), token)
+	if err != nil {
+		_, _ = ctx.CallbackQuery.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: "Failed to create GitHub client.", ShowAlert: true})
+		return nil
+	}
 	ctxBg := context.Background()
 
 	var msg string

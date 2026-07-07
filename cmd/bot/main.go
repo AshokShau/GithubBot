@@ -150,7 +150,11 @@ func main() {
 			return
 		}
 
-		ghClient := clientFactory.GetUserClient(context.Background(), token.AccessToken)
+		ghClient, err := clientFactory.GetUserClient(context.Background(), token.AccessToken)
+		if err != nil {
+			http.Error(w, "Failed to create GitHub client", http.StatusInternalServerError)
+			return
+		}
 		u, _, err := ghClient.Users.Get(context.Background(), "")
 		if err != nil {
 			http.Error(w, "Failed to fetch user", http.StatusInternalServerError)

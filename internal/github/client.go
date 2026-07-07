@@ -15,10 +15,8 @@ func NewClientFactory() *ClientFactory {
 }
 
 // GetUserClient returns a GitHub client authenticated as a specific User (via OAuth token)
-func (f *ClientFactory) GetUserClient(ctx context.Context, accessToken string) *github.Client {
+func (f *ClientFactory) GetUserClient(ctx context.Context, accessToken string) (*github.Client, error) {
 	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: accessToken})
 	tc := oauth2.NewClient(ctx, ts)
-	// TODO: handle error
-	c, _ := github.NewClient(github.WithHTTPClient(tc))
-	return c
+	return github.NewClient(github.WithHTTPClient(tc))
 }

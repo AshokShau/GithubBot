@@ -109,7 +109,12 @@ func (h *CommandHandler) AddRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 
-	client := h.ClientFactory.GetUserClient(context.Background(), token)
+	client, err := h.ClientFactory.GetUserClient(context.Background(), token)
+	if err != nil {
+		_, _ = ctx.EffectiveMessage.Reply(b, "Failed to create GitHub client.", nil)
+		return nil
+	}
+
 	var owner, repo string
 	if n := len(repoFullName); n > 0 {
 		for i := 0; i < n; i++ {
@@ -194,7 +199,7 @@ func (h *CommandHandler) AddRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 		WebhookID:    webhookID,
 	}
 
-	err := h.DB.AddRepoLink(context.Background(), ctx.EffectiveChat.Id, link)
+	err = h.DB.AddRepoLink(context.Background(), ctx.EffectiveChat.Id, link)
 	if err != nil {
 		_, err := ctx.EffectiveMessage.Reply(b, "Error linking repository.", nil)
 		return err
@@ -222,7 +227,12 @@ func (h *CommandHandler) sendRepoList(b *gotgbot.Bot, ctx *ext.Context, page int
 		return nil
 	}
 
-	client := h.ClientFactory.GetUserClient(context.Background(), token)
+	client, err := h.ClientFactory.GetUserClient(context.Background(), token)
+	if err != nil {
+		_, _ = ctx.EffectiveMessage.Reply(b, "Failed to create GitHub client.", nil)
+		return nil
+	}
+
 	opts := &github.RepositoryListOptions{
 		Sort:        "updated",
 		Direction:   "desc",
@@ -350,26 +360,29 @@ func (h *CommandHandler) RemoveRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 			if decErr != nil {
 				webhookStatusMsg = "\n\n⚠️ <b>Warning:</b> Could not decrypt your access token. Webhook not removed from GitHub."
 			} else {
-				client := h.ClientFactory.GetUserClient(context.Background(), token)
-
-				var owner, repo string
-				for i := 0; i < len(repoFullName); i++ {
-					if repoFullName[i] == '/' {
-						owner = repoFullName[:i]
-						repo = repoFullName[i+1:]
-						break
+				client, err := h.ClientFactory.GetUserClient(context.Background(), token)
+				if err != nil {
+					webhookStatusMsg = "\n\n⚠️ <b>Warning:</b> Failed to create GitHub client. Webhook not removed."
+				} else {
+					var owner, repo string
+					for i := 0; i < len(repoFullName); i++ {
+						if repoFullName[i] == '/' {
+							owner = repoFullName[:i]
+							repo = repoFullName[i+1:]
+							break
+						}
 					}
-				}
 
-				if owner != "" && repo != "" {
-					_, err := client.Repositories.DeleteHook(context.Background(), owner, repo, link.WebhookID)
-					if err != nil {
-						if h.handleAuthError(b, ctx, err) {
-							webhookStatusMsg = "\n\n⚠️ <b>Warning:</b> GitHub authentication failed. Webhook not removed."
-						} else {
-							if errResp, ok := errors.AsType[*github.ErrorResponse](err); ok && errResp.Response.StatusCode == http.StatusNotFound {
+					if owner != "" && repo != "" {
+						_, err := client.Repositories.DeleteHook(context.Background(), owner, repo, link.WebhookID)
+						if err != nil {
+							if h.handleAuthError(b, ctx, err) {
+								webhookStatusMsg = "\n\n⚠️ <b>Warning:</b> GitHub authentication failed. Webhook not removed."
 							} else {
-								webhookStatusMsg = fmt.Sprintf("\n\n⚠️ <b>Warning:</b> Failed to remove webhook from GitHub: %v", err)
+								if errResp, ok := errors.AsType[*github.ErrorResponse](err); ok && errResp.Response.StatusCode == http.StatusNotFound {
+								} else {
+									webhookStatusMsg = fmt.Sprintf("\n\n⚠️ <b>Warning:</b> Failed to remove webhook from GitHub: %v", err)
+								}
 							}
 						}
 					}
@@ -621,5 +634,5 @@ func (h *CommandHandler) getAuthenticatedClient(b *gotgbot.Bot, ctx *ext.Context
 		return nil, err
 	}
 
-	return h.ClientFactory.GetUserClient(context.Background(), token), nil
+	return h.ClientFactory.GetUserClient(context.Background(), token)
 }
