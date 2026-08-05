@@ -465,10 +465,7 @@ func (h *CallbackHandler) handleRepoPage(b *gotgbot.Bot, ctx *ext.Context, page 
 		navRow = append(navRow, gotgbot.InlineKeyboardButton{Text: "< Prev", CallbackData: fmt.Sprintf("c:ar:pg:%d", resp.PrevPage)})
 	}
 
-	startPage := page - 1
-	if startPage < 1 {
-		startPage = 1
-	}
+	startPage := max(page-1, 1)
 	endPage := page + 1
 	if resp.LastPage != 0 && endPage > resp.LastPage {
 		endPage = resp.LastPage
@@ -531,9 +528,9 @@ func (h *CallbackHandler) handleAddRepoByID(b *gotgbot.Bot, ctx *ext.Context, re
 
 	webhookURL := fmt.Sprintf("%s/webhook/%s", h.Config.TelegramWebhookURL, chatToken)
 	webhookConfig := &gh.HookConfig{
-		URL:         gh.String(webhookURL),
-		ContentType: gh.String("json"),
-		Secret:      gh.String(h.Config.GitHubWebhookSecret),
+		URL:         gh.Ptr(webhookURL),
+		ContentType: gh.Ptr("json"),
+		Secret:      gh.Ptr(h.Config.GitHubWebhookSecret),
 	}
 
 	var defaultEvents []string
@@ -542,10 +539,10 @@ func (h *CallbackHandler) handleAddRepoByID(b *gotgbot.Bot, ctx *ext.Context, re
 	}
 
 	hook := &gh.Hook{
-		Name:   gh.String("web"),
+		Name:   gh.Ptr("web"),
 		Events: defaultEvents,
 		Config: webhookConfig,
-		Active: gh.Bool(true),
+		Active: gh.Ptr(true),
 	}
 
 	createdHook, _, hookErr := client.Repositories.CreateHook(context.Background(), repo.GetOwner().GetLogin(), repo.GetName(), hook)
@@ -627,7 +624,7 @@ func (h *CallbackHandler) HandlePRAction(b *gotgbot.Bot, ctx *ext.Context) error
 
 	switch action {
 	case "approve":
-		_, _, err = client.PullRequests.CreateReview(ctxBg, owner, repo, prNum, &gh.PullRequestReviewRequest{Event: gh.String("APPROVE")})
+		_, _, err = client.PullRequests.CreateReview(ctxBg, owner, repo, prNum, &gh.PullRequestReviewRequest{Event: gh.Ptr("APPROVE")})
 		msg = "Approved!"
 	case "close":
 		_, _, err = client.PullRequests.Edit(ctxBg, owner, repo, prNum, &gh.PullRequest{State: new("closed")})

@@ -64,6 +64,14 @@ func (d *DB) createIndexes() error {
 	return nil
 }
 
+// MuteThread adds a threadID to the muted_threads set of a chat
+func (d *DB) MuteThread(ctx context.Context, chatID int64, threadID int64) error {
+	filter := bson.M{"_id": chatID}
+	update := bson.M{"$addToSet": bson.M{"muted_threads": threadID}}
+	_, err := d.Chats.UpdateOne(ctx, filter, update)
+	return err
+}
+
 func (d *DB) GetUserByTelegramID(ctx context.Context, telegramID int64) (*models.User, error) {
 	var user models.User
 	err := d.Users.FindOne(ctx, bson.M{"_id": telegramID}).Decode(&user)

@@ -67,7 +67,7 @@ func TestEncoding(t *testing.T) {
 	plainText := "test text"
 
 	// Run multiple times to account for random nonce
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		encrypted, err := Encrypt(plainText, key)
 		if err != nil {
 			t.Fatalf("Encrypt() error = %v", err)

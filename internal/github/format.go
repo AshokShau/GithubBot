@@ -636,7 +636,7 @@ func FormatWorkflowDispatchEvent(e *github.WorkflowDispatchEvent) (string, *gotg
 
 	inputs := "No inputs"
 	if e.Inputs != nil {
-		var inputsMap map[string]interface{}
+		var inputsMap map[string]any
 		if err := json.Unmarshal(e.Inputs, &inputsMap); err == nil && len(inputsMap) > 0 {
 			var inputPairs []string
 			for k, v := range inputsMap {
@@ -751,7 +751,7 @@ func FormatRepositoryDispatchEvent(e *github.RepositoryDispatchEvent) (string, *
 
 	var payloadStr string
 	if e.ClientPayload != nil {
-		var payload map[string]interface{}
+		var payload map[string]any
 		if err := json.Unmarshal(e.ClientPayload, &payload); err == nil {
 			if len(payload) > 0 {
 				payloadBytes, _ := json.Marshal(payload)

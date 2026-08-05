@@ -91,7 +91,16 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func (s *WebhookServer) processEvent(event interface{}, chatID int64, topicID int64, hookID int64) {
+func (s *WebhookServer) processEvent(event any, chatID int64, topicID int64, hookID int64) {
+	/*
+		chat, err := s.DB.GetChat(context.Background(), chatID)
+		if err == nil {
+			if slices.Contains(chat.MutedThreads, topicID) {
+					return
+				}
+		}
+	*/
+
 	if e, ok := event.(*github.RepositoryEvent); ok && e.GetAction() == "renamed" {
 		newFullName := e.GetRepo().GetFullName()
 		if newFullName != "" && hookID != 0 {
@@ -147,7 +156,7 @@ func normalizeMessage(s string) string {
 	return out
 }
 
-func (s *WebhookServer) storeMessageContext(messageID int64, chatID int64, event interface{}) {
+func (s *WebhookServer) storeMessageContext(messageID int64, chatID int64, event any) {
 	key := fmt.Sprintf("%d:%d", chatID, messageID)
 	var ctx models.MessageContext
 
@@ -196,7 +205,7 @@ func (s *WebhookServer) storeMessageContext(messageID int64, chatID int64, event
 	s.ContextCache.Set(key, ctx, 48*time.Hour)
 }
 
-func (s *WebhookServer) formatMessage(event interface{}) (string, *gotgbot.InlineKeyboardMarkup) {
+func (s *WebhookServer) formatMessage(event any) (string, *gotgbot.InlineKeyboardMarkup) {
 	switch e := event.(type) {
 	case *github.PushEvent:
 		return FormatPushEvent(e)

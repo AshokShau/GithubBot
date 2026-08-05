@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"slices"
 	"time"
 
 	"github-webhook/internal/cache"
@@ -10,12 +11,7 @@ import (
 
 func IsAdmin(b *gotgbot.Bot, chatID int64, userID int64, adminCache *cache.Cache[int64, []int64]) bool {
 	if admins, ok := adminCache.Get(chatID); ok {
-		for _, adminID := range admins {
-			if adminID == userID {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(admins, userID)
 	}
 
 	admins, err := b.GetChatAdministrators(chatID, nil)
