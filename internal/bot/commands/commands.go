@@ -20,7 +20,7 @@ import (
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
-	"github.com/google/go-github/v89/github"
+	"github.com/google/go-github/v90/github"
 )
 
 type CommandHandler struct {
@@ -601,8 +601,8 @@ func (h *CommandHandler) handleIssueAction(b *gotgbot.Bot, ctx *ext.Context, sta
 		return nil
 	}
 
-	req := &github.IssueRequest{State: &state}
-	_, _, err = client.Issues.Edit(context.Background(), mContext.Owner, mContext.Repo, mContext.IssueNumber, req)
+	req := github.UpdateIssueRequest{State: &state}
+	_, _, err = client.Issues.Update(context.Background(), mContext.Owner, mContext.Repo, mContext.IssueNumber, req)
 
 	if err != nil {
 		if h.handleAuthError(b, ctx, err) {

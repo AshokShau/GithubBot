@@ -18,7 +18,7 @@ import (
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
-	gh "github.com/google/go-github/v89/github"
+	gh "github.com/google/go-github/v90/github"
 )
 
 type CallbackHandler struct {
@@ -233,7 +233,8 @@ func (h *CallbackHandler) showRepoMenu(b *gotgbot.Bot, ctx *ext.Context, l *mode
 		{Text: "🔙 Back to Repo List", CallbackData: "c:ls"},
 	})
 
-	_, _, err := ctx.EffectiveMessage.EditText(b, fmt.Sprintf("Configuration for <b>%s</b>:", l.RepoFullName), &gotgbot.EditMessageTextOpts{
+	_, _, err := ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{
+		Text:        fmt.Sprintf("Configuration for <b>%s</b>:", l.RepoFullName),
 		ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: kb},
 		ParseMode:   "HTML",
 	})
@@ -301,7 +302,8 @@ func (h *CallbackHandler) handlePresets(b *gotgbot.Bot, ctx *ext.Context, l *mod
 		{{Text: "🔙 Back", CallbackData: fmt.Sprintf("c:r:%s", l.RepoFullName)}},
 	}
 
-	_, _, err = ctx.EffectiveMessage.EditText(b, responseText, &gotgbot.EditMessageTextOpts{
+	_, _, err = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{
+		Text:        responseText,
 		ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: kb},
 		ParseMode:   "HTML",
 	})
@@ -311,19 +313,19 @@ func (h *CallbackHandler) handlePresets(b *gotgbot.Bot, ctx *ext.Context, l *mod
 func (h *CallbackHandler) showIndividualEvents(b *gotgbot.Bot, ctx *ext.Context, l *models.RepoLink, page int) error {
 	user, err := h.DB.GetUserByTelegramID(context.Background(), ctx.EffectiveUser.Id)
 	if err != nil || user.EncryptedOAuthToken == "" {
-		_, _, _ = ctx.EffectiveMessage.EditText(b, "Error: You must be connected to GitHub to view/edit settings.", nil)
+		_, _, _ = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{Text: "Error: You must be connected to GitHub to view/edit settings."})
 		return nil
 	}
 
 	token, err := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
 	if err != nil {
-		_, _, _ = ctx.EffectiveMessage.EditText(b, "Auth error. Please reconnect.", nil)
+		_, _, _ = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{Text: "Auth error. Please reconnect."})
 		return nil
 	}
 
 	client, err := h.ClientFactory.GetUserClient(context.Background(), token)
 	if err != nil {
-		_, _, _ = ctx.EffectiveMessage.EditText(b, "Failed to create GitHub client.", nil)
+		_, _, _ = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{Text: "Failed to create GitHub client."})
 		return nil
 	}
 	parts := strings.Split(l.RepoFullName, "/")
@@ -337,7 +339,7 @@ func (h *CallbackHandler) showIndividualEvents(b *gotgbot.Bot, ctx *ext.Context,
 		if h.handleAuthError(b, ctx, err) {
 			return nil
 		}
-		_, _, _ = ctx.EffectiveMessage.EditText(b, "Error fetching webhook settings from GitHub. Check permissions.", nil)
+		_, _, _ = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{Text: "Error fetching webhook settings from GitHub. Check permissions."})
 		return nil
 	}
 
@@ -385,7 +387,8 @@ func (h *CallbackHandler) showIndividualEvents(b *gotgbot.Bot, ctx *ext.Context,
 
 	kb = append(kb, []gotgbot.InlineKeyboardButton{{Text: "🔙 Back", CallbackData: fmt.Sprintf("c:r:%s", l.RepoFullName)}})
 
-	_, _, err = ctx.EffectiveMessage.EditText(b, fmt.Sprintf("Individual Events for <b>%s</b>:", l.RepoFullName), &gotgbot.EditMessageTextOpts{
+	_, _, err = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{
+		Text:        fmt.Sprintf("Individual Events for <b>%s</b>:", l.RepoFullName),
 		ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: kb},
 		ParseMode:   "HTML",
 	})
@@ -399,7 +402,7 @@ func (h *CallbackHandler) showRepoList(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	if len(links) == 0 {
-		_, _, err = ctx.EffectiveMessage.EditText(b, "No repositories linked. Use /addrepo first.", nil)
+		_, _, err = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{Text: "No repositories linked. Use /addrepo first."})
 		return err
 	}
 
@@ -410,7 +413,8 @@ func (h *CallbackHandler) showRepoList(b *gotgbot.Bot, ctx *ext.Context) error {
 		})
 	}
 
-	_, _, err = ctx.EffectiveMessage.EditText(b, "Select a repository to configure:", &gotgbot.EditMessageTextOpts{
+	_, _, err = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{
+		Text:        "Select a repository to configure:",
 		ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: kb},
 	})
 	return err
@@ -489,7 +493,8 @@ func (h *CallbackHandler) handleRepoPage(b *gotgbot.Bot, ctx *ext.Context, page 
 		kb = append(kb, navRow)
 	}
 
-	_, _, err = ctx.EffectiveMessage.EditText(b, fmt.Sprintf("Select a repository to add (Page %d):", page), &gotgbot.EditMessageTextOpts{
+	_, _, err = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{
+		Text:        fmt.Sprintf("Select a repository to add (Page %d):", page),
 		ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: kb},
 	})
 
@@ -548,8 +553,10 @@ func (h *CallbackHandler) handleAddRepoByID(b *gotgbot.Bot, ctx *ext.Context, re
 		if h.handleAuthError(b, ctx, hookErr) {
 			return nil
 		}
-		msg := fmt.Sprintf("Webhook creation failed: %v. Check permissions", hookErr)
-		_, _, err = ctx.EffectiveMessage.EditText(b, msg, &gotgbot.EditMessageTextOpts{ParseMode: "HTML"})
+
+		_, _, err = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{
+			Text:      fmt.Sprintf("Webhook creation failed: %v. Check permissions", hookErr),
+			ParseMode: "HTML"})
 		return err
 	}
 
@@ -565,8 +572,7 @@ func (h *CallbackHandler) handleAddRepoByID(b *gotgbot.Bot, ctx *ext.Context, re
 		return nil
 	}
 
-	msg := fmt.Sprintf("✅ Repository <b>%s</b> linked successfully!", repo.GetFullName())
-	_, _, err = ctx.EffectiveMessage.EditText(b, msg, &gotgbot.EditMessageTextOpts{ParseMode: "HTML"})
+	_, _, err = ctx.EffectiveMessage.EditText(b, &gotgbot.EditMessageTextOpts{Text: fmt.Sprintf("✅ Repository <b>%s</b> linked successfully!", repo.GetFullName()), ParseMode: "HTML"})
 	return err
 }
 

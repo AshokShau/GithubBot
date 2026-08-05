@@ -12,7 +12,7 @@ import (
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
-	gh "github.com/google/go-github/v89/github"
+	gh "github.com/google/go-github/v90/github"
 )
 
 type ReplyHandler struct {
