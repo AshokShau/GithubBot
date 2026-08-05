@@ -124,7 +124,7 @@ func TestFormatReleaseBody(t *testing.T) {
 	t.Run("Long body", func(t *testing.T) {
 		// Create a body with more than 10 lines
 		var lines []string
-		for i := 0; i < 15; i++ {
+		for range 15 {
 			lines = append(lines, "line")
 		}
 		body := strings.Join(lines, "\n")
