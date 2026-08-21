@@ -68,10 +68,14 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if s.Config.GitHubWebhookSecret == "" {
+		log.Printf("Warning: GITHUB_WEBHOOK_SECRET is not set in bot configuration")
+	}
+
 	payload, err := github.ValidatePayload(r, []byte(s.Config.GitHubWebhookSecret))
 	if err != nil {
-		log.Printf("Error: Webhook signature validation failed. Ensure GITHUB_WEBHOOK_SECRET matches. Error: %v", err)
-		http.Error(w, "Invalid signature", http.StatusUnauthorized)
+		log.Printf("Error: Webhook signature validation failed for chat %d (topic %d). Ensure GITHUB_WEBHOOK_SECRET matches. Error: %v", chatID, topicID, err)
+		http.Error(w, "Webhook signature validation failed. The secret configured in your GitHub repository webhook settings does not match the GITHUB_WEBHOOK_SECRET configured on the bot server.", http.StatusUnauthorized)
 		return
 	}
 
@@ -119,13 +123,18 @@ func (s *WebhookServer) processEvent(event any, chatID int64, topicID int64, hoo
 	}
 
 	msg = normalizeMessage(msg)
+	var replyMarkup gotgbot.ReplyMarkup
+	if markup != nil {
+		replyMarkup = markup
+	}
+
 	opts := &gotgbot.SendMessageOpts{
 		ParseMode:       "MarkdownV2",
 		MessageThreadId: topicID,
 		LinkPreviewOptions: &gotgbot.LinkPreviewOptions{
 			IsDisabled: true,
 		},
-		ReplyMarkup: markup,
+		ReplyMarkup: replyMarkup,
 	}
 
 	sentMsg, err := s.Bot.SendMessage(chatID, msg, opts)

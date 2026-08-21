@@ -85,6 +85,14 @@ func FormatTextWithMarkdown(text string) string {
 
 	var originals []string
 	tempBody := re.ReplaceAllStringFunc(markdownText, func(match string) string {
+		if strings.HasPrefix(match, "[") && strings.Contains(match, "](") && strings.HasSuffix(match, ")") {
+			closeBracketIdx := strings.Index(match, "](")
+			if closeBracketIdx != -1 {
+				linkText := match[1:closeBracketIdx]
+				linkURL := match[closeBracketIdx+2 : len(match)-1]
+				match = fmt.Sprintf("[%s](%s)", EscapeMarkdownV2(linkText), EscapeMarkdownV2URL(linkURL))
+			}
+		}
 		originals = append(originals, match)
 		return fmt.Sprintf("___PLACEHOLDER_%d___", len(originals)-1)
 	})
