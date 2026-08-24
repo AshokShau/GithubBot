@@ -2,4 +2,19 @@ services:
   github-bot:
     build: .
     restart: always
+    ports:
+      - "${PORT:-8080}:${PORT:-8080}"
     env_file: .env
+    depends_on:
+      - mongo
+
+  mongo:
+    image: mongo:latest
+    restart: always
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+volumes:
+  mongo_data:

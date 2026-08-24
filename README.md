@@ -113,7 +113,7 @@ OWNER_ID=123456789
     ```
 2.  Build the binary:
     ```bash
-    go build -o bot cmd/bot/main.go
+    go build -o bot main.go
     ```
 3.  Run the application:
     ```bash
