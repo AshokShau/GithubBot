@@ -9,7 +9,7 @@ import (
 	"github.com/JohannesKaufmann/html-to-markdown/v2/converter"
 	"github.com/JohannesKaufmann/html-to-markdown/v2/plugin/strikethrough"
 	"github.com/JohannesKaufmann/html-to-markdown/v2/plugin/table"
-	"github.com/PaulSonOfLars/gotgbot/v2"
+	"github.com/AshokShau/gotdbot"
 )
 
 // ConvertHTMLToMarkdown converts HTML to Markdown using the html-to-markdown library.
@@ -146,13 +146,20 @@ func FormatUser(userLogin string) string {
 	return fmt.Sprintf("[%s](https://github.com/%s)", EscapeMarkdownV2(userLogin), EscapeMarkdownV2URL(userLogin))
 }
 
-func FormatMessageWithButton(message, buttonText, buttonURL string) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatMessageWithButton(message, buttonText, buttonURL string) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	if buttonText == "" || buttonURL == "" {
 		return message, nil
 	}
-	return message, &gotgbot.InlineKeyboardMarkup{
-		InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
-			{{Text: buttonText, Url: buttonURL}},
+	return message, &gotdbot.ReplyMarkupInlineKeyboard{
+		Rows: [][]gotdbot.InlineKeyboardButton{
+			{
+				{
+					Text: buttonText,
+					Type: &gotdbot.InlineKeyboardButtonTypeUrl{
+						Url: buttonURL,
+					},
+				},
+			},
 		},
 	}
 }

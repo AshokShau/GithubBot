@@ -1,4 +1,4 @@
-FROM golang:1.26-alpine AS builder
+FROM golang:1.26
 
 WORKDIR /app
 
@@ -7,14 +7,7 @@ RUN go mod download
 
 COPY . .
 
-RUN go build -o bot cmd/bot/main.go
-
-FROM alpine:latest
-
-WORKDIR /app
-
-COPY --from=builder /app/bot .
-
-RUN apk --no-cache add ca-certificates
+RUN go generate
+RUN go build -o bot .
 
 CMD ["./bot"]
