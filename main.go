@@ -41,7 +41,7 @@ func main() {
 	// TODO: add cfg.ApiID or cfg.ApiHash
 
 	bot, err := gotdbot.NewClient(6, "eb06d4abfb49dc3eeb1aeb98ae0f581e", cfg.TelegramToken, &gotdbot.ClientOpts{
-		LibraryPath: "./libtdjson.so.1.8.66",
+		LibraryPath: "./libtdjson.so.1.8.67",
 		AutoRetry:   &gotdbot.AutoRetry{MaxFloodWait: 5 * time.Minute, ChatNotFound: true},
 	})
 
