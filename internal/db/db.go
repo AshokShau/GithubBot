@@ -65,7 +65,7 @@ func (d *DB) createIndexes() error {
 }
 
 // MuteThread adds a threadID to the muted_threads set of a chat
-func (d *DB) MuteThread(ctx context.Context, chatID int64, threadID int64) error {
+func (d *DB) MuteThread(ctx context.Context, chatID int64, threadID int32) error {
 	filter := bson.M{"_id": chatID}
 	update := bson.M{"$addToSet": bson.M{"muted_threads": threadID}}
 	_, err := d.Chats.UpdateOne(ctx, filter, update)

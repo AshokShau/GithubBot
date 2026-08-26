@@ -6,29 +6,24 @@ import (
 
 	"github-webhook/internal/cache"
 
-	"github.com/PaulSonOfLars/gotgbot/v2"
+	"github.com/AshokShau/gotdbot"
 )
 
-func IsAdmin(b *gotgbot.Bot, chatID int64, userID int64, adminCache *cache.Cache[int64, []int64]) bool {
+func IsAdmin(b *gotdbot.Client, chatID int64, userID int64, adminCache *cache.Cache[int64, []int64]) bool {
 	if admins, ok := adminCache.Get(chatID); ok {
 		return slices.Contains(admins, userID)
 	}
 
-	admins, err := b.GetChatAdministrators(chatID, nil)
+	admins, err := b.GetChatAdministrators(chatID)
 	if err != nil {
-		member, err := b.GetChatMember(chatID, userID, nil)
-		if err != nil {
-			return false
-		}
-
-		status := member.GetStatus()
-		return status == "administrator" || status == "creator"
+		b.Logger.Warnf(err.Error())
+		return false
 	}
 
 	var adminIDs []int64
 	isAdmin := false
-	for _, admin := range admins {
-		id := admin.GetUser().Id
+	for _, admin := range admins.Administrators {
+		id := admin.UserId
 		adminIDs = append(adminIDs, id)
 		if id == userID {
 			isAdmin = true

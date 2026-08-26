@@ -19,10 +19,19 @@ import (
 	"html"
 	"net/http"
 
-	"github.com/PaulSonOfLars/gotgbot/v2"
-	"github.com/PaulSonOfLars/gotgbot/v2/ext"
+	"github.com/AshokShau/gotdbot"
+
 	"github.com/google/go-github/v90/github"
 )
+
+func getTopicID(m *gotdbot.Message) int32 {
+	if m.TopicId != nil {
+		if t, ok := m.TopicId.(*gotdbot.MessageTopicForum); ok {
+			return t.ForumTopicId
+		}
+	}
+	return 0
+}
 
 type CommandHandler struct {
 	Config          *config.Config
@@ -50,7 +59,7 @@ func NewCommandHandler(cfg *config.Config, database *db.DB, oauth *gh.OAuth, sta
 	}
 }
 
-func (h *CommandHandler) Start(b *gotgbot.Bot, ctx *ext.Context) error {
+func (h *CommandHandler) Start(c *gotdbot.Client, m *gotdbot.Message) error {
 	msg := `<b>Welcome to the GitHub Bot!</b> 🤖
 
 I can help you manage your GitHub repositories and notifications directly from Telegram.
@@ -61,13 +70,13 @@ I can help you manage your GitHub repositories and notifications directly from T
 3. Use /settings to customize your notification preferences.
 
 Need help? Type /help for a full list of commands.`
-	_, err := ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err := m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) Connect(b *gotgbot.Bot, ctx *ext.Context) error {
-	if ctx.EffectiveChat.Type != gotgbot.ChatTypePrivate {
-		_, err := ctx.EffectiveMessage.Reply(b, "⚠️ The /connect command can only be used in a private chat with the bot.", nil)
+func (h *CommandHandler) Connect(c *gotdbot.Client, m *gotdbot.Message) error {
+	if !m.IsPrivate() {
+		_, err := m.ReplyText(c, "⚠️ The /connect command can only be used in a private chat with the bot.", nil)
 		return err
 	}
 
@@ -76,43 +85,43 @@ func (h *CommandHandler) Connect(b *gotgbot.Bot, ctx *ext.Context) error {
 		return err
 	}
 
-	h.StateCache.Set(state, ctx.EffectiveUser.Id, 10*time.Minute)
+	h.StateCache.Set(state, m.SenderID(), 10*time.Minute)
 
 	url := h.OAuth.GetLoginURL(state)
 
 	msg := fmt.Sprintf("Please [connect your GitHub account](%s) to enable automatic webhook setup and perform actions like approving PRs.", url)
-	_, err = ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "Markdown"})
+	_, err = m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeMarkdown})
 	return err
 }
 
-func (h *CommandHandler) AddRepo(b *gotgbot.Bot, ctx *ext.Context) error {
-	if ctx.EffectiveChat.Type != gotgbot.ChatTypePrivate && !utils.IsAdmin(b, ctx.EffectiveChat.Id, ctx.EffectiveUser.Id, h.AdminCache) {
-		_, err := ctx.EffectiveMessage.Reply(b, "Only admins can add repositories.", nil)
+func (h *CommandHandler) AddRepo(c *gotdbot.Client, m *gotdbot.Message) error {
+	if !m.IsPrivate() && !utils.IsAdmin(c, m.ChatId, m.SenderID(), h.AdminCache) {
+		_, err := m.ReplyText(c, "Only admins can add repositories.", nil)
 		return err
 	}
 
-	args := ctx.Args()
+	args := append([]string{"/"}, m.ArgsList()...)
 	if len(args) < 2 {
-		return h.listUserRepos(b, ctx)
+		return h.listUserRepos(c, m)
 	}
 
 	repoFullName := args[1]
-	user, uErr := h.DB.GetUserByTelegramID(context.Background(), ctx.EffectiveUser.Id)
+	user, uErr := h.DB.GetUserByTelegramID(context.Background(), m.SenderID())
 	if uErr != nil || user.EncryptedOAuthToken == "" {
 		msg := fmt.Sprintf("Please [connect your GitHub account](%s) first to link repository %s.", h.OAuth.GetLoginURL("connect"), repoFullName)
-		_, _ = ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "Markdown"})
+		_, _ = m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeMarkdown})
 		return nil
 	}
 
 	token, decErr := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
 	if decErr != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Auth error. Reconnect via /connect", nil)
+		_, _ = m.ReplyText(c, "Auth error. Reconnect via /connect", nil)
 		return nil
 	}
 
 	client, err := h.ClientFactory.GetUserClient(context.Background(), token)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Failed to create GitHub client.", nil)
+		_, _ = m.ReplyText(c, "Failed to create GitHub client.", nil)
 		return nil
 	}
 
@@ -128,39 +137,39 @@ func (h *CommandHandler) AddRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	if owner == "" || repo == "" {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Invalid repository format. Use owner/repo", nil)
+		_, _ = m.ReplyText(c, "Invalid repository format. Use owner/repo", nil)
 		return nil
 	}
 
 	_, _, getErr := client.Repositories.Get(context.Background(), owner, repo)
 	if getErr != nil {
-		if h.handleAuthError(b, ctx, getErr) {
+		if h.handleAuthError(c, m, getErr) {
 			return nil
 		}
 		if errResp, ok := errors.AsType[*github.ErrorResponse](getErr); ok && errResp.Response.StatusCode == http.StatusNotFound {
-			_, _ = ctx.EffectiveMessage.Reply(b, "❌ <b>Repository not found.</b>\nPlease check the name and ensure you have access.", &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+			_, _ = m.ReplyText(c, "❌ <b>Repository not found.</b>\nPlease check the name and ensure you have access.", &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Error fetching repository: %v", getErr), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Error fetching repository: %v", getErr), nil)
 		return nil
 	}
 
-	payload := fmt.Sprintf("%d", ctx.EffectiveChat.Id)
-	if ctx.EffectiveMessage.MessageThreadId != 0 {
-		payload = fmt.Sprintf("%d:%d", ctx.EffectiveChat.Id, ctx.EffectiveMessage.MessageThreadId)
+	payload := fmt.Sprintf("%d", m.ChatId)
+	if getTopicID(m) != 0 {
+		payload = fmt.Sprintf("%d:%d", m.ChatId, getTopicID(m))
 	}
 
 	token, encErr := utils.Encrypt(payload, h.EncryptionKey)
 	if encErr != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Error generating webhook token.", nil)
+		_, _ = m.ReplyText(c, "Error generating webhook token.", nil)
 		return nil
 	}
 
 	webhookURL := fmt.Sprintf("%s/webhook/%s", h.Config.TelegramWebhookURL, token)
 	webhookConfig := &github.HookConfig{
-		URL:         github.Ptr(webhookURL),
-		ContentType: github.Ptr("json"),
-		Secret:      github.Ptr(h.Config.GitHubWebhookSecret),
+		URL:         new(webhookURL),
+		ContentType: new("json"),
+		Secret:      new(h.Config.GitHubWebhookSecret),
 	}
 
 	var defaultEvents []string
@@ -177,19 +186,19 @@ func (h *CommandHandler) AddRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	createdHook, _, hookErr := client.Repositories.CreateHook(context.Background(), owner, repo, hook)
 	if hookErr != nil {
-		if h.handleAuthError(b, ctx, hookErr) {
+		if h.handleAuthError(c, m, hookErr) {
 			return nil
 		}
 		if errResp, ok := errors.AsType[*github.ErrorResponse](hookErr); ok && errResp.Response.StatusCode == http.StatusNotFound {
 			safeRepoName := html.EscapeString(repoFullName)
 			msg := fmt.Sprintf("❌ <b>Insufficient permissions.</b>\nYou need admin access to repository <b>%s</b> to create webhooks.", safeRepoName)
-			_, err := ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+			_, err := m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 			return err
 		}
 
 		log.Printf("Webhook creation failed for %s: %v", repoFullName, hookErr)
 		msg := "⚠️ <b>Webhook creation failed.</b>\nPlease ensure you have admin rights and try again."
-		_, err := ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+		_, err := m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 		return err
 	}
 
@@ -199,37 +208,37 @@ func (h *CommandHandler) AddRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 		WebhookID:    webhookID,
 	}
 
-	err = h.DB.AddRepoLink(context.Background(), ctx.EffectiveChat.Id, link)
+	err = h.DB.AddRepoLink(context.Background(), m.ChatId, link)
 	if err != nil {
-		_, err := ctx.EffectiveMessage.Reply(b, "Error linking repository.", nil)
+		_, err := m.ReplyText(c, "Error linking repository.", nil)
 		return err
 	}
 
 	msg := fmt.Sprintf("Repository <b>%s</b> linked successfully!", repoFullName)
-	_, err = ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) listUserRepos(b *gotgbot.Bot, ctx *ext.Context) error {
-	return h.sendRepoList(b, ctx, 1)
+func (h *CommandHandler) listUserRepos(c *gotdbot.Client, m *gotdbot.Message) error {
+	return h.sendRepoList(c, m, 1)
 }
 
-func (h *CommandHandler) sendRepoList(b *gotgbot.Bot, ctx *ext.Context, page int) error {
-	user, err := h.DB.GetUserByTelegramID(context.Background(), ctx.EffectiveUser.Id)
+func (h *CommandHandler) sendRepoList(c *gotdbot.Client, m *gotdbot.Message, page int) error {
+	user, err := h.DB.GetUserByTelegramID(context.Background(), m.SenderID())
 	if err != nil || user.EncryptedOAuthToken == "" {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Please /connect your GitHub account first to list repositories.", nil)
+		_, _ = m.ReplyText(c, "Please /connect your GitHub account first to list repositories.", nil)
 		return nil
 	}
 
 	token, err := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Auth error. Reconnect via /connect", nil)
+		_, _ = m.ReplyText(c, "Auth error. Reconnect via /connect", nil)
 		return nil
 	}
 
 	client, err := h.ClientFactory.GetUserClient(context.Background(), token)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Failed to create GitHub client.", nil)
+		_, _ = m.ReplyText(c, "Failed to create GitHub client.", nil)
 		return nil
 	}
 
@@ -241,29 +250,29 @@ func (h *CommandHandler) sendRepoList(b *gotgbot.Bot, ctx *ext.Context, page int
 
 	repos, resp, err := client.Repositories.List(context.Background(), "", opts)
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, "Failed to fetch repositories from GitHub.", nil)
+		_, _ = m.ReplyText(c, "Failed to fetch repositories from GitHub.", nil)
 		return nil
 	}
 
 	if len(repos) == 0 && page == 1 {
-		_, _ = ctx.EffectiveMessage.Reply(b, "No repositories found.", nil)
+		_, _ = m.ReplyText(c, "No repositories found.", nil)
 		return nil
 	}
 
-	var kb [][]gotgbot.InlineKeyboardButton
+	var kb [][]gotdbot.InlineKeyboardButton
 	for _, repo := range repos {
-		kb = append(kb, []gotgbot.InlineKeyboardButton{
-			{Text: repo.GetFullName(), CallbackData: fmt.Sprintf("c:ar:id:%d", repo.GetID())},
+		kb = append(kb, []gotdbot.InlineKeyboardButton{
+			{Text: repo.GetFullName(), Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:ar:id:%d", repo.GetID())}},
 		})
 	}
 
-	var navRow []gotgbot.InlineKeyboardButton
+	var navRow []gotdbot.InlineKeyboardButton
 
 	if resp.FirstPage != 0 && resp.PrevPage != 0 {
-		navRow = append(navRow, gotgbot.InlineKeyboardButton{Text: "< Prev", CallbackData: fmt.Sprintf("c:ar:pg:%d", resp.PrevPage)})
+		navRow = append(navRow, gotdbot.InlineKeyboardButton{Text: "< Prev", Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:ar:pg:%d", resp.PrevPage)}})
 	}
 
 	startPage := max(page-1, 1)
@@ -281,75 +290,75 @@ func (h *CommandHandler) sendRepoList(b *gotgbot.Bot, ctx *ext.Context, page int
 		if i == page {
 			text = fmt.Sprintf("· %d ·", i)
 		}
-		navRow = append(navRow, gotgbot.InlineKeyboardButton{Text: text, CallbackData: fmt.Sprintf("c:ar:pg:%d", i)})
+		navRow = append(navRow, gotdbot.InlineKeyboardButton{Text: text, Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:ar:pg:%d", i)}})
 	}
 
 	if resp.NextPage != 0 {
-		navRow = append(navRow, gotgbot.InlineKeyboardButton{Text: "Next >", CallbackData: fmt.Sprintf("c:ar:pg:%d", resp.NextPage)})
+		navRow = append(navRow, gotdbot.InlineKeyboardButton{Text: "Next >", Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:ar:pg:%d", resp.NextPage)}})
 	}
 
 	if len(navRow) > 0 {
 		kb = append(kb, navRow)
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Select a repository to add (Page %d):", page), &gotgbot.SendMessageOpts{
-		ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: kb},
+	_, err = m.ReplyText(c, fmt.Sprintf("Select a repository to add (Page %d):", page), &gotdbot.SendTextMessageOpts{
+		ReplyMarkup: &gotdbot.ReplyMarkupInlineKeyboard{Rows: kb},
 	})
 	return err
 }
 
-func (h *CommandHandler) Settings(b *gotgbot.Bot, ctx *ext.Context) error {
-	if ctx.EffectiveChat.Type != gotgbot.ChatTypePrivate && !utils.IsAdmin(b, ctx.EffectiveChat.Id, ctx.EffectiveUser.Id, h.AdminCache) {
-		_, err := ctx.EffectiveMessage.Reply(b, "Only admins can modify settings.", nil)
+func (h *CommandHandler) Settings(c *gotdbot.Client, m *gotdbot.Message) error {
+	if !m.IsPrivate() && !utils.IsAdmin(c, m.ChatId, m.SenderID(), h.AdminCache) {
+		_, err := m.ReplyText(c, "Only admins can modify settings.", nil)
 		return err
 	}
 
-	links, err := h.DB.GetChatLinks(context.Background(), ctx.EffectiveChat.Id)
+	links, err := h.DB.GetChatLinks(context.Background(), m.ChatId)
 	if err != nil {
 		return err
 	}
 
 	if len(links) == 0 {
-		_, err = ctx.EffectiveMessage.Reply(b, "No repositories linked. Use /addrepo first.", nil)
+		_, err = m.ReplyText(c, "No repositories linked. Use /addrepo first.", nil)
 		return err
 	}
 
-	var kb [][]gotgbot.InlineKeyboardButton
+	var kb [][]gotdbot.InlineKeyboardButton
 	for _, l := range links {
-		kb = append(kb, []gotgbot.InlineKeyboardButton{
-			{Text: l.RepoFullName, CallbackData: fmt.Sprintf("c:r:%s", l.RepoFullName)},
+		kb = append(kb, []gotdbot.InlineKeyboardButton{
+			{Text: l.RepoFullName, Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:r:%s", l.RepoFullName)}},
 		})
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, "Select a repository to configure:", &gotgbot.SendMessageOpts{
-		ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: kb},
+	_, err = m.ReplyText(c, "Select a repository to configure:", &gotdbot.SendTextMessageOpts{
+		ReplyMarkup: &gotdbot.ReplyMarkupInlineKeyboard{Rows: kb},
 	})
 	return err
 }
 
-func (h *CommandHandler) RemoveRepo(b *gotgbot.Bot, ctx *ext.Context) error {
-	if ctx.EffectiveChat.Type != gotgbot.ChatTypePrivate && !utils.IsAdmin(b, ctx.EffectiveChat.Id, ctx.EffectiveUser.Id, h.AdminCache) {
-		_, err := ctx.EffectiveMessage.Reply(b, "Only admins can remove repositories.", nil)
+func (h *CommandHandler) RemoveRepo(c *gotdbot.Client, m *gotdbot.Message) error {
+	if !m.IsPrivate() && !utils.IsAdmin(c, m.ChatId, m.SenderID(), h.AdminCache) {
+		_, err := m.ReplyText(c, "Only admins can remove repositories.", nil)
 		return err
 	}
 
-	args := ctx.Args()
+	args := append([]string{"/"}, m.ArgsList()...)
 	if len(args) < 2 {
-		_, err := ctx.EffectiveMessage.Reply(b, "Usage: /removerepo owner/repo", nil)
+		_, err := m.ReplyText(c, "Usage: /removerepo owner/repo", nil)
 		return err
 	}
 
 	repoFullName := args[1]
-	link, err := h.DB.GetRepoLink(context.Background(), ctx.EffectiveChat.Id, repoFullName)
+	link, err := h.DB.GetRepoLink(context.Background(), m.ChatId, repoFullName)
 	if err != nil {
-		_, err := ctx.EffectiveMessage.Reply(b, "Error finding repository link or not found.", nil)
+		_, err := m.ReplyText(c, "Error finding repository link or not found.", nil)
 		return err
 	}
 
 	var webhookStatusMsg string
 
 	if link.WebhookID != 0 {
-		user, uErr := h.DB.GetUserByTelegramID(context.Background(), ctx.EffectiveUser.Id)
+		user, uErr := h.DB.GetUserByTelegramID(context.Background(), m.SenderID())
 		if uErr != nil || user.EncryptedOAuthToken == "" {
 			webhookStatusMsg = "\n\n⚠️ <b>Warning:</b> You are not connected to GitHub. The webhook could not be removed from the repository settings. Please remove it manually."
 		} else {
@@ -373,7 +382,7 @@ func (h *CommandHandler) RemoveRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 					if owner != "" && repo != "" {
 						_, err := client.Repositories.DeleteHook(context.Background(), owner, repo, link.WebhookID)
 						if err != nil {
-							if h.handleAuthError(b, ctx, err) {
+							if h.handleAuthError(c, m, err) {
 								webhookStatusMsg = "\n\n⚠️ <b>Warning:</b> GitHub authentication failed. Webhook not removed."
 							} else {
 								if errResp, ok := errors.AsType[*github.ErrorResponse](err); ok && errResp.Response.StatusCode == http.StatusNotFound {
@@ -388,24 +397,24 @@ func (h *CommandHandler) RemoveRepo(b *gotgbot.Bot, ctx *ext.Context) error {
 		}
 	}
 
-	err = h.DB.RemoveRepoLink(context.Background(), ctx.EffectiveChat.Id, repoFullName)
+	err = h.DB.RemoveRepoLink(context.Background(), m.ChatId, repoFullName)
 	if err != nil {
-		_, err := ctx.EffectiveMessage.Reply(b, "Error removing repository from database.", nil)
+		_, err := m.ReplyText(c, "Error removing repository from database.", nil)
 		return err
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Repository <b>%s</b> removed successfully.%s", repoFullName, webhookStatusMsg), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, fmt.Sprintf("Repository <b>%s</b> removed successfully.%s", repoFullName, webhookStatusMsg), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) Repos(b *gotgbot.Bot, ctx *ext.Context) error {
-	links, err := h.DB.GetChatLinks(context.Background(), ctx.EffectiveChat.Id)
+func (h *CommandHandler) Repos(c *gotdbot.Client, m *gotdbot.Message) error {
+	links, err := h.DB.GetChatLinks(context.Background(), m.ChatId)
 	if err != nil {
 		return err
 	}
 
 	if len(links) == 0 {
-		_, err = ctx.EffectiveMessage.Reply(b, "No repositories linked.", nil)
+		_, err = m.ReplyText(c, "No repositories linked.", nil)
 		return err
 	}
 
@@ -414,11 +423,11 @@ func (h *CommandHandler) Repos(b *gotgbot.Bot, ctx *ext.Context) error {
 		msg.WriteString(fmt.Sprintf("• <b>%s</b>\n", l.RepoFullName))
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, "<b>Linked Repositories:</b>\n"+msg.String(), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, "<b>Linked Repositories:</b>\n"+msg.String(), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) Help(b *gotgbot.Bot, ctx *ext.Context) error {
+func (h *CommandHandler) Help(c *gotdbot.Client, m *gotdbot.Message) error {
 	msg := `<b>GitHub Bot Commands:</b>
 
 <b>Authentication</b>
@@ -516,46 +525,46 @@ func (h *CommandHandler) Help(b *gotgbot.Bot, ctx *ext.Context) error {
 /privacy - View the privacy policy
 /help - Show this help menu`
 
-	_, err := ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "HTML", LinkPreviewOptions: &gotgbot.LinkPreviewOptions{IsDisabled: true}})
+	_, err := m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
-func (h *CommandHandler) Reload(b *gotgbot.Bot, ctx *ext.Context) error {
-	if ctx.EffectiveChat.Type == gotgbot.ChatTypePrivate {
+func (h *CommandHandler) Reload(c *gotdbot.Client, m *gotdbot.Message) error {
+	if m.IsPrivate() {
 		return nil
 	}
 
-	if expiry, ok := h.ReloadRateLimit.Get(ctx.EffectiveChat.Id); ok {
+	if expiry, ok := h.ReloadRateLimit.Get(m.ChatId); ok {
 		remaining := time.Until(expiry)
 		if remaining > 0 {
 			minutes := int(math.Ceil(remaining.Minutes()))
-			_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Please wait %d minutes before reloading again.", minutes), nil)
+			_, _ = m.ReplyText(c, fmt.Sprintf("Please wait %d minutes before reloading again.", minutes), nil)
 			return nil
 		}
 	}
 
-	member, err := b.GetChatMember(ctx.EffectiveChat.Id, ctx.EffectiveUser.Id, nil)
+	member, err := c.GetChatMember(m.ChatId, &gotdbot.MessageSenderUser{UserId: m.SenderID()})
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Failed to check permissions.", nil)
+		_, _ = m.ReplyText(c, "Failed to check permissions.", nil)
 		return nil
 	}
 
-	status := member.GetStatus()
-	isAdmin := status == "administrator" || status == "creator"
+	status := member.Status.GetType()
+	isAdmin := status == "chatMemberStatusAdministrator" || status == "chatMemberStatusCreator"
 
 	if !isAdmin {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Only admins can reload the cache.", nil)
+		_, _ = m.ReplyText(c, "Only admins can reload the cache.", nil)
 		return nil
 	}
 
-	h.AdminCache.Delete(ctx.EffectiveChat.Id)
+	h.AdminCache.Delete(m.ChatId)
 	expiry := time.Now().Add(10 * time.Minute)
-	h.ReloadRateLimit.Set(ctx.EffectiveChat.Id, expiry, 10*time.Minute)
-	_, err = ctx.EffectiveMessage.Reply(b, "Admin cache reloaded.", nil)
+	h.ReloadRateLimit.Set(m.ChatId, expiry, 10*time.Minute)
+	_, err = m.ReplyText(c, "Admin cache reloaded.", nil)
 	return err
 }
 
-func (h *CommandHandler) Privacy(b *gotgbot.Bot, ctx *ext.Context) error {
+func (h *CommandHandler) Privacy(c *gotdbot.Client, m *gotdbot.Message) error {
 	msg := `<b>Privacy Policy</b>
 
 We value your privacy and are committed to protecting your data. This policy outlines how we collect, use, and safeguard your information.
@@ -580,60 +589,59 @@ We value your privacy and are committed to protecting your data. This policy out
 <b>5. Contact</b>
 If you have questions or concerns, please visit our <a href="https://github.com/AshokShau/GithubBot">GitHub repository</a> or join our <a href="https://t.me/GuardxSupport">Telegram Support Group</a>.`
 
-	_, err := ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "HTML", LinkPreviewOptions: &gotgbot.LinkPreviewOptions{IsDisabled: true}})
+	_, err := m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
-func (h *CommandHandler) Logout(b *gotgbot.Bot, ctx *ext.Context) error {
-	err := h.DB.ClearUserToken(context.Background(), ctx.EffectiveUser.Id)
+func (h *CommandHandler) Logout(c *gotdbot.Client, m *gotdbot.Message) error {
+	err := h.DB.ClearUserToken(context.Background(), m.SenderID())
 	if err != nil {
-		_, err = ctx.EffectiveMessage.Reply(b, "Error logging out.", nil)
+		_, err = m.ReplyText(c, "Error logging out.", nil)
 		return err
 	}
-	_, err = ctx.EffectiveMessage.Reply(b, "✅ You have been logged out. Use /connect to reconnect.", nil)
+	_, err = m.ReplyText(c, "✅ You have been logged out. Use /connect to reconnect.", nil)
 	return err
 }
 
-func (h *CommandHandler) handleAuthError(b *gotgbot.Bot, ctx *ext.Context, err error) bool {
+func (h *CommandHandler) handleAuthError(c *gotdbot.Client, m *gotdbot.Message, err error) bool {
 	if errResp, ok := errors.AsType[*github.ErrorResponse](err); ok {
 		if errResp.Response.StatusCode == http.StatusUnauthorized || errResp.Response.StatusCode == http.StatusForbidden {
-			_ = h.DB.ClearUserToken(context.Background(), ctx.EffectiveUser.Id)
+			_ = h.DB.ClearUserToken(context.Background(), m.SenderID())
 			msg := "⚠️ <b>GitHub authentication failed.</b>\nIt seems your token has expired or was revoked. Please /connect again."
-			_, _ = ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+			_, _ = m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 			return true
 		}
 	}
 	return false
 }
 
-func (h *CommandHandler) Close(b *gotgbot.Bot, ctx *ext.Context) error {
-	return h.handleIssueAction(b, ctx, "closed")
+func (h *CommandHandler) Close(c *gotdbot.Client, m *gotdbot.Message) error {
+	return h.handleIssueAction(c, m, "closed")
 }
 
-func (h *CommandHandler) Reopen(b *gotgbot.Bot, ctx *ext.Context) error {
-	return h.handleIssueAction(b, ctx, "open")
+func (h *CommandHandler) Reopen(c *gotdbot.Client, m *gotdbot.Message) error {
+	return h.handleIssueAction(c, m, "open")
 }
 
-func (h *CommandHandler) Approve(b *gotgbot.Bot, ctx *ext.Context) error {
-	msg := ctx.EffectiveMessage
-	if msg.ReplyToMessage == nil {
-		_, err := msg.Reply(b, "Please use this command in reply to a notification.", nil)
+func (h *CommandHandler) Approve(c *gotdbot.Client, m *gotdbot.Message) error {
+	if m.ReplyToMessageID() == 0 {
+		_, err := m.ReplyText(c, "Please use this command in reply to a notification.", nil)
 		return err
 	}
 
-	key := fmt.Sprintf("%d:%d", ctx.EffectiveChat.Id, msg.ReplyToMessage.MessageId)
+	key := fmt.Sprintf("%d:%d", m.ChatId, m.ReplyToMessageID())
 	mContext, found := h.ContextCache.Get(key)
 	if !found {
-		_, err := msg.Reply(b, "Context not found. The message might be too old.", nil)
+		_, err := m.ReplyText(c, "Context not found. The message might be too old.", nil)
 		return err
 	}
 
 	if mContext.Type != "pr" && mContext.Type != "pr_review" {
-		_, err := msg.Reply(b, "This command is only for Pull Requests.", nil)
+		_, err := m.ReplyText(c, "This command is only for Pull Requests.", nil)
 		return err
 	}
 
-	client, err := h.getAuthenticatedClient(b, ctx)
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
@@ -644,32 +652,31 @@ func (h *CommandHandler) Approve(b *gotgbot.Bot, ctx *ext.Context) error {
 	_, _, err = client.PullRequests.CreateReview(context.Background(), mContext.Owner, mContext.Repo, mContext.IssueNumber, review)
 
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = msg.Reply(b, fmt.Sprintf("Failed to approve: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to approve: %v", err), nil)
 		return nil
 	}
 
-	_, err = msg.Reply(b, fmt.Sprintf("✅ PR #%d approved.", mContext.IssueNumber), nil)
+	_, err = m.ReplyText(c, fmt.Sprintf("✅ PR #%d approved.", mContext.IssueNumber), nil)
 	return err
 }
 
-func (h *CommandHandler) handleIssueAction(b *gotgbot.Bot, ctx *ext.Context, state string) error {
-	msg := ctx.EffectiveMessage
-	if msg.ReplyToMessage == nil {
-		_, err := msg.Reply(b, "Please use this command in reply to a notification.", nil)
+func (h *CommandHandler) handleIssueAction(c *gotdbot.Client, m *gotdbot.Message, state string) error {
+	if m.ReplyToMessageID() == 0 {
+		_, err := m.ReplyText(c, "Please use this command in reply to a notification.", nil)
 		return err
 	}
 
-	key := fmt.Sprintf("%d:%d", ctx.EffectiveChat.Id, msg.ReplyToMessage.MessageId)
+	key := fmt.Sprintf("%d:%d", m.ChatId, m.ReplyToMessageID())
 	mContext, found := h.ContextCache.Get(key)
 	if !found {
-		_, err := msg.Reply(b, "Context not found. The message might be too old.", nil)
+		_, err := m.ReplyText(c, "Context not found. The message might be too old.", nil)
 		return err
 	}
 
-	client, err := h.getAuthenticatedClient(b, ctx)
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
@@ -678,10 +685,10 @@ func (h *CommandHandler) handleIssueAction(b *gotgbot.Bot, ctx *ext.Context, sta
 	_, _, err = client.Issues.Update(context.Background(), mContext.Owner, mContext.Repo, mContext.IssueNumber, req)
 
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = msg.Reply(b, fmt.Sprintf("Failed to update state: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to update state: %v", err), nil)
 		return nil
 	}
 
@@ -689,29 +696,29 @@ func (h *CommandHandler) handleIssueAction(b *gotgbot.Bot, ctx *ext.Context, sta
 	if state == "open" {
 		action = "reopened"
 	}
-	_, err = msg.Reply(b, fmt.Sprintf("✅ Issue/PR #%d %s.", mContext.IssueNumber, action), nil)
+	_, err = m.ReplyText(c, fmt.Sprintf("✅ Issue/PR #%d %s.", mContext.IssueNumber, action), nil)
 	return err
 }
 
-func (h *CommandHandler) getAuthenticatedClient(b *gotgbot.Bot, ctx *ext.Context) (*github.Client, error) {
-	user, err := h.DB.GetUserByTelegramID(context.Background(), ctx.EffectiveUser.Id)
+func (h *CommandHandler) getAuthenticatedClient(c *gotdbot.Client, m *gotdbot.Message) (*github.Client, error) {
+	user, err := h.DB.GetUserByTelegramID(context.Background(), m.SenderID())
 	if err != nil || user.EncryptedOAuthToken == "" {
 		msg := fmt.Sprintf("Please [connect your GitHub account](%s) first.", h.OAuth.GetLoginURL("connect"))
-		_, _ = ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "Markdown"})
+		_, _ = m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeMarkdown})
 		return nil, fmt.Errorf("auth required")
 	}
 
 	token, err := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Auth error. Reconnect via /connect", nil)
+		_, _ = m.ReplyText(c, "Auth error. Reconnect via /connect", nil)
 		return nil, err
 	}
 
 	return h.ClientFactory.GetUserClient(context.Background(), token)
 }
 
-func (h *CommandHandler) resolveRepoContext(ctx *ext.Context) (owner string, repo string, err error) {
-	args := ctx.Args()
+func (h *CommandHandler) resolveRepoContext(m *gotdbot.Message) (owner string, repo string, err error) {
+	args := append([]string{"/"}, m.ArgsList()...)
 	if len(args) > 1 {
 		parts := strings.Split(args[1], "/")
 		if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
@@ -719,16 +726,15 @@ func (h *CommandHandler) resolveRepoContext(ctx *ext.Context) (owner string, rep
 		}
 	}
 
-	msg := ctx.EffectiveMessage
-	if msg.ReplyToMessage != nil {
-		key := fmt.Sprintf("%d:%d", ctx.EffectiveChat.Id, msg.ReplyToMessage.MessageId)
+	if m.ReplyToMessageID() != 0 {
+		key := fmt.Sprintf("%d:%d", m.ChatId, m.ReplyToMessageID())
 		mContext, found := h.ContextCache.Get(key)
 		if found && mContext.Owner != "" && mContext.Repo != "" {
 			return mContext.Owner, mContext.Repo, nil
 		}
 	}
 
-	links, dbErr := h.DB.GetChatLinks(context.Background(), ctx.EffectiveChat.Id)
+	links, dbErr := h.DB.GetChatLinks(context.Background(), m.ChatId)
 	if dbErr == nil && len(links) == 1 {
 		parts := strings.Split(links[0].RepoFullName, "/")
 		if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
@@ -739,17 +745,16 @@ func (h *CommandHandler) resolveRepoContext(ctx *ext.Context) (owner string, rep
 	return "", "", errors.New("could not resolve repository. Please provide `owner/repo` or reply to a notification")
 }
 
-func (h *CommandHandler) resolveIssueOrPRNumber(ctx *ext.Context) (int, error) {
-	msg := ctx.EffectiveMessage
-	if msg.ReplyToMessage != nil {
-		key := fmt.Sprintf("%d:%d", ctx.EffectiveChat.Id, msg.ReplyToMessage.MessageId)
+func (h *CommandHandler) resolveIssueOrPRNumber(m *gotdbot.Message) (int, error) {
+	if m.ReplyToMessageID() != 0 {
+		key := fmt.Sprintf("%d:%d", m.ChatId, m.ReplyToMessageID())
 		mContext, found := h.ContextCache.Get(key)
 		if found && mContext.IssueNumber != 0 {
 			return mContext.IssueNumber, nil
 		}
 	}
 
-	args := ctx.Args()
+	args := append([]string{"/"}, m.ArgsList()...)
 	if len(args) > 1 {
 		for _, arg := range args[1:] {
 			if strings.HasPrefix(arg, "#") {
@@ -765,10 +770,9 @@ func (h *CommandHandler) resolveIssueOrPRNumber(ctx *ext.Context) (int, error) {
 	return 0, errors.New("could not resolve issue/PR number. Please reply to a notification or provide the number as an argument")
 }
 
-func (h *CommandHandler) resolveCommentID(ctx *ext.Context) (int64, error) {
-	msg := ctx.EffectiveMessage
-	if msg.ReplyToMessage != nil {
-		key := fmt.Sprintf("%d:%d", ctx.EffectiveChat.Id, msg.ReplyToMessage.MessageId)
+func (h *CommandHandler) resolveCommentID(m *gotdbot.Message) (int64, error) {
+	if m.ReplyToMessageID() != 0 {
+		key := fmt.Sprintf("%d:%d", m.ChatId, m.ReplyToMessageID())
 		mContext, found := h.ContextCache.Get(key)
 		if found && mContext.CommentID != 0 {
 			return mContext.CommentID, nil
@@ -777,18 +781,18 @@ func (h *CommandHandler) resolveCommentID(ctx *ext.Context) (int64, error) {
 	return 0, errors.New("could not resolve comment context. Please reply to a comment notification")
 }
 
-func (h *CommandHandler) Me(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Me(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
 	user, _, err := client.Users.Get(context.Background(), "")
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to fetch user details: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to fetch user details: %v", err), nil)
 		return nil
 	}
 
@@ -820,28 +824,28 @@ func (h *CommandHandler) Me(b *gotgbot.Bot, ctx *ext.Context) error {
 		html.EscapeString(user.GetHTMLURL()),
 	)
 
-	_, err = ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) Repo(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Repo(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
 	repoInfo, _, err := client.Repositories.Get(context.Background(), owner, repo)
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to fetch repository info: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to fetch repository info: %v", err), nil)
 		return nil
 	}
 
@@ -907,197 +911,197 @@ func (h *CommandHandler) Repo(b *gotgbot.Bot, ctx *ext.Context) error {
 		html.EscapeString(repoInfo.GetHTMLURL()),
 	)
 
-	_, err = ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) Star(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Star(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
 	_, err = client.Activity.Star(context.Background(), owner, repo)
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to star repository: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to star repository: %v", err), nil)
 		return nil
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("⭐ Starred repository <b>%s/%s</b>!", owner, repo), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, fmt.Sprintf("⭐ Starred repository <b>%s/%s</b>!", owner, repo), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) Unstar(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Unstar(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
 	_, err = client.Activity.Unstar(context.Background(), owner, repo)
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to unstar repository: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to unstar repository: %v", err), nil)
 		return nil
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Removed star from <b>%s/%s</b>.", owner, repo), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, fmt.Sprintf("Removed star from <b>%s/%s</b>.", owner, repo), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) Watch(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Watch(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
 	sub := &github.Subscription{Subscribed: new(true)}
 	_, _, err = client.Activity.SetRepositorySubscription(context.Background(), owner, repo, sub)
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to watch repository: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to watch repository: %v", err), nil)
 		return nil
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("👁️ Watching repository <b>%s/%s</b>!", owner, repo), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, fmt.Sprintf("👁️ Watching repository <b>%s/%s</b>!", owner, repo), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) Unwatch(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Unwatch(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
 	_, err = client.Activity.DeleteRepositorySubscription(context.Background(), owner, repo)
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to unwatch repository: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to unwatch repository: %v", err), nil)
 		return nil
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Stopped watching <b>%s/%s</b>.", owner, repo), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, fmt.Sprintf("Stopped watching <b>%s/%s</b>.", owner, repo), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) Fork(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Fork(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
 	forked, _, err := client.Repositories.CreateFork(context.Background(), owner, repo, nil)
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to fork repository: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to fork repository: %v", err), nil)
 		return nil
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("🍴 Repository forked successfully to <b>%s</b>!", forked.GetFullName()), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, fmt.Sprintf("🍴 Repository forked successfully to <b>%s</b>!", forked.GetFullName()), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) Archive(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Archive(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	update := &github.Repository{Archived: github.Ptr(true)}
+	update := &github.Repository{Archived: new(true)}
 	_, _, err = client.Repositories.Edit(context.Background(), owner, repo, update)
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to archive repository: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to archive repository: %v", err), nil)
 		return nil
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("🔒 Repository <b>%s/%s</b> archived.", owner, repo), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, fmt.Sprintf("🔒 Repository <b>%s/%s</b> archived.", owner, repo), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) Unarchive(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Unarchive(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	update := &github.Repository{Archived: github.Ptr(false)}
+	update := &github.Repository{Archived: new(false)}
 	_, _, err = client.Repositories.Edit(context.Background(), owner, repo, update)
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to unarchive repository: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to unarchive repository: %v", err), nil)
 		return nil
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("🔓 Repository <b>%s/%s</b> unarchived.", owner, repo), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, fmt.Sprintf("🔓 Repository <b>%s/%s</b> unarchived.", owner, repo), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) Contributors(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Contributors(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
@@ -1105,10 +1109,10 @@ func (h *CommandHandler) Contributors(b *gotgbot.Bot, ctx *ext.Context) error {
 		ListOptions: github.ListOptions{PerPage: 10},
 	})
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to list contributors: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to list contributors: %v", err), nil)
 		return nil
 	}
 
@@ -1118,28 +1122,28 @@ func (h *CommandHandler) Contributors(b *gotgbot.Bot, ctx *ext.Context) error {
 		msg.WriteString(fmt.Sprintf("%d. <b>%s</b> (%d commits)\n", i+1, html.EscapeString(c.GetLogin()), c.GetContributions()))
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, msg.String(), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) Languages(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Languages(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
 	langs, _, err := client.Repositories.ListLanguages(context.Background(), owner, repo)
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to fetch languages: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to fetch languages: %v", err), nil)
 		return nil
 	}
 
@@ -1159,19 +1163,19 @@ func (h *CommandHandler) Languages(b *gotgbot.Bot, ctx *ext.Context) error {
 		}
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, msg.String(), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) Branches(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Branches(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
@@ -1179,10 +1183,10 @@ func (h *CommandHandler) Branches(b *gotgbot.Bot, ctx *ext.Context) error {
 		ListOptions: github.ListOptions{PerPage: 20},
 	})
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to list branches: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to list branches: %v", err), nil)
 		return nil
 	}
 
@@ -1192,35 +1196,35 @@ func (h *CommandHandler) Branches(b *gotgbot.Bot, ctx *ext.Context) error {
 		msg.WriteString(fmt.Sprintf("• %s\n", html.EscapeString(br.GetName())))
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, msg.String(), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) Branch(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Branch(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	args := ctx.Args()
+	args := append([]string{"/"}, m.ArgsList()...)
 	if len(args) < 2 {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Usage: /branch branch-name", nil)
+		_, _ = m.ReplyText(c, "Usage: /branch branch-name", nil)
 		return nil
 	}
 	branchName := args[1]
 
 	branch, _, err := client.Repositories.GetBranch(context.Background(), owner, repo, branchName, 3)
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Branch not found or failed to fetch: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Branch not found or failed to fetch: %v", err), nil)
 		return nil
 	}
 
@@ -1243,56 +1247,56 @@ func (h *CommandHandler) Branch(b *gotgbot.Bot, ctx *ext.Context) error {
 		html.EscapeString(branch.GetCommit().GetCommit().GetAuthor().GetName()),
 	)
 
-	_, err = ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) Default(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Default(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	args := ctx.Args()
+	args := append([]string{"/"}, m.ArgsList()...)
 	if len(args) < 2 {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Usage: /default branch-name", nil)
+		_, _ = m.ReplyText(c, "Usage: /default branch-name", nil)
 		return nil
 	}
 	branchName := args[1]
 
-	update := &github.Repository{DefaultBranch: github.Ptr(branchName)}
+	update := &github.Repository{DefaultBranch: new(branchName)}
 	_, _, err = client.Repositories.Edit(context.Background(), owner, repo, update)
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to change default branch: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to change default branch: %v", err), nil)
 		return nil
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("✅ Default branch for <b>%s/%s</b> changed to <b>%s</b>.", owner, repo, html.EscapeString(branchName)), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, fmt.Sprintf("✅ Default branch for <b>%s/%s</b> changed to <b>%s</b>.", owner, repo, html.EscapeString(branchName)), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) Issue(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Issue(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	text := ctx.EffectiveMessage.Text
+	text := m.GetText()
 	parts := strings.SplitN(text, "\n", 2)
 	titlePart := ""
 	bodyPart := ""
@@ -1316,7 +1320,7 @@ func (h *CommandHandler) Issue(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	if titlePart == "" {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Usage: /issue Title\n\n[Optional Body]", nil)
+		_, _ = m.ReplyText(c, "Usage: /issue Title\n\n[Optional Body]", nil)
 		return nil
 	}
 
@@ -1329,36 +1333,36 @@ func (h *CommandHandler) Issue(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	issue, _, err := client.Issues.Create(context.Background(), owner, repo, req)
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to create issue: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to create issue: %v", err), nil)
 		return nil
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("✅ Created issue <b>#%d</b>: <a href=\"%s\">%s</a>", issue.GetNumber(), issue.GetHTMLURL(), html.EscapeString(issue.GetTitle())), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, fmt.Sprintf("✅ Created issue <b>#%d</b>: <a href=\"%s\">%s</a>", issue.GetNumber(), issue.GetHTMLURL(), html.EscapeString(issue.GetTitle())), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) Comment(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Comment(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	num, err := h.resolveIssueOrPRNumber(ctx)
+	num, err := h.resolveIssueOrPRNumber(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	cmdText := ctx.EffectiveMessage.Text
+	cmdText := m.GetText()
 	body := strings.TrimSpace(strings.TrimPrefix(cmdText, "/comment"))
 	if strings.HasPrefix(body, "@") {
 		spaceIdx := strings.Index(body, " ")
@@ -1370,158 +1374,158 @@ func (h *CommandHandler) Comment(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	if body == "" {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Usage: /comment comment-text (replying to a notification)", nil)
+		_, _ = m.ReplyText(c, "Usage: /comment comment-text (replying to a notification)", nil)
 		return nil
 	}
 
 	comment, _, err := client.Issues.CreateComment(context.Background(), owner, repo, num, &github.IssueComment{Body: &body})
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to add comment: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to add comment: %v", err), nil)
 		return nil
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("✅ Comment added to <b>#%d</b>: <a href=\"%s\">View</a>", num, comment.GetHTMLURL()), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, fmt.Sprintf("✅ Comment added to <b>#%d</b>: <a href=\"%s\">View</a>", num, comment.GetHTMLURL()), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) Assign(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Assign(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	num, err := h.resolveIssueOrPRNumber(ctx)
+	num, err := h.resolveIssueOrPRNumber(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	args := ctx.Args()
+	args := append([]string{"/"}, m.ArgsList()...)
 	if len(args) < 2 {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Usage: /assign @username", nil)
+		_, _ = m.ReplyText(c, "Usage: /assign @username", nil)
 		return nil
 	}
 	target := strings.TrimPrefix(args[1], "@")
 
 	_, _, err = client.Issues.AddAssignees(context.Background(), owner, repo, num, []string{target})
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to assign user: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to assign user: %v", err), nil)
 		return nil
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("✅ Assigned <b>@%s</b> to #%d.", html.EscapeString(target), num), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, fmt.Sprintf("✅ Assigned <b>@%s</b> to #%d.", html.EscapeString(target), num), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) AssignMe(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) AssignMe(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	num, err := h.resolveIssueOrPRNumber(ctx)
+	num, err := h.resolveIssueOrPRNumber(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
 	ghUser, _, err := client.Users.Get(context.Background(), "")
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to fetch authenticated user details: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to fetch authenticated user details: %v", err), nil)
 		return nil
 	}
 
 	target := ghUser.GetLogin()
 	_, _, err = client.Issues.AddAssignees(context.Background(), owner, repo, num, []string{target})
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to assign you: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to assign you: %v", err), nil)
 		return nil
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("✅ Assigned you (<b>@%s</b>) to #%d.", html.EscapeString(target), num), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, fmt.Sprintf("✅ Assigned you (<b>@%s</b>) to #%d.", html.EscapeString(target), num), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) Unassign(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Unassign(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	num, err := h.resolveIssueOrPRNumber(ctx)
+	num, err := h.resolveIssueOrPRNumber(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	args := ctx.Args()
+	args := append([]string{"/"}, m.ArgsList()...)
 	if len(args) < 2 {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Usage: /unassign @username", nil)
+		_, _ = m.ReplyText(c, "Usage: /unassign @username", nil)
 		return nil
 	}
 	target := strings.TrimPrefix(args[1], "@")
 
 	_, _, err = client.Issues.RemoveAssignees(context.Background(), owner, repo, num, []string{target})
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to unassign user: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to unassign user: %v", err), nil)
 		return nil
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("✅ Unassigned <b>@%s</b> from #%d.", html.EscapeString(target), num), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, fmt.Sprintf("✅ Unassigned <b>@%s</b> from #%d.", html.EscapeString(target), num), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) Label(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Label(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	num, err := h.resolveIssueOrPRNumber(ctx)
+	num, err := h.resolveIssueOrPRNumber(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	args := ctx.Args()
+	args := append([]string{"/"}, m.ArgsList()...)
 	if len(args) < 2 {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Usage: /label +bug -help-wanted", nil)
+		_, _ = m.ReplyText(c, "Usage: /label +bug -help-wanted", nil)
 		return nil
 	}
 
@@ -1540,10 +1544,10 @@ func (h *CommandHandler) Label(b *gotgbot.Bot, ctx *ext.Context) error {
 	if len(toAdd) > 0 {
 		_, _, err = client.Issues.AddLabelsToIssue(context.Background(), owner, repo, num, toAdd)
 		if err != nil {
-			if h.handleAuthError(b, ctx, err) {
+			if h.handleAuthError(c, m, err) {
 				return nil
 			}
-			_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to add labels: %v", err), nil)
+			_, _ = m.ReplyText(c, fmt.Sprintf("Failed to add labels: %v", err), nil)
 			return nil
 		}
 	}
@@ -1557,23 +1561,23 @@ func (h *CommandHandler) Label(b *gotgbot.Bot, ctx *ext.Context) error {
 		}
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("✅ Labels updated for #%d.", num), nil)
+	_, err = m.ReplyText(c, fmt.Sprintf("✅ Labels updated for #%d.", num), nil)
 	return err
 }
 
-func (h *CommandHandler) Labels(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Labels(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	num, err := h.resolveIssueOrPRNumber(ctx)
+	num, err := h.resolveIssueOrPRNumber(m)
 	var labels []*github.Label
 	if err == nil {
 		labels, _, err = client.Issues.ListLabelsByIssue(context.Background(), owner, repo, num, nil)
@@ -1582,10 +1586,10 @@ func (h *CommandHandler) Labels(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to list labels: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to list labels: %v", err), nil)
 		return nil
 	}
 
@@ -1604,145 +1608,145 @@ func (h *CommandHandler) Labels(b *gotgbot.Bot, ctx *ext.Context) error {
 		}
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, msg.String(), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) Milestone(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Milestone(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	num, err := h.resolveIssueOrPRNumber(ctx)
+	num, err := h.resolveIssueOrPRNumber(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	args := ctx.Args()
+	args := append([]string{"/"}, m.ArgsList()...)
 	if len(args) < 2 {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Usage: /milestone v1.0", nil)
+		_, _ = m.ReplyText(c, "Usage: /milestone v1.0", nil)
 		return nil
 	}
 	mName := args[1]
 
 	milestones, _, err := client.Issues.ListMilestones(context.Background(), owner, repo, &github.MilestoneListOptions{State: "open"})
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to fetch milestones: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to fetch milestones: %v", err), nil)
 		return nil
 	}
 
 	var mNum *int
 	for _, m := range milestones {
 		if strings.EqualFold(m.GetTitle(), mName) {
-			mNum = github.Ptr(m.GetNumber())
+			mNum = new(m.GetNumber())
 			break
 		}
 	}
 
 	if mNum == nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Milestone '%s' not found.", mName), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Milestone '%s' not found.", mName), nil)
 		return nil
 	}
 
 	req := github.UpdateIssueRequest{Milestone: mNum}
 	_, _, err = client.Issues.Update(context.Background(), owner, repo, num, req)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to assign milestone: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to assign milestone: %v", err), nil)
 		return nil
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("✅ Assigned milestone <b>%s</b> to #%d.", html.EscapeString(mName), num), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, fmt.Sprintf("✅ Assigned milestone <b>%s</b> to #%d.", html.EscapeString(mName), num), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) Lock(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Lock(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	num, err := h.resolveIssueOrPRNumber(ctx)
+	num, err := h.resolveIssueOrPRNumber(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
 	_, err = client.Issues.Lock(context.Background(), owner, repo, num, nil)
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to lock: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to lock: %v", err), nil)
 		return nil
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("🔒 Locked conversation on #%d.", num), nil)
+	_, err = m.ReplyText(c, fmt.Sprintf("🔒 Locked conversation on #%d.", num), nil)
 	return err
 }
 
-func (h *CommandHandler) Unlock(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Unlock(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	num, err := h.resolveIssueOrPRNumber(ctx)
+	num, err := h.resolveIssueOrPRNumber(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
 	_, err = client.Issues.Unlock(context.Background(), owner, repo, num)
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to unlock: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to unlock: %v", err), nil)
 		return nil
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("🔓 Unlocked conversation on #%d.", num), nil)
+	_, err = m.ReplyText(c, fmt.Sprintf("🔓 Unlocked conversation on #%d.", num), nil)
 	return err
 }
 
-func (h *CommandHandler) Pin(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Pin(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	num, err := h.resolveIssueOrPRNumber(ctx)
+	num, err := h.resolveIssueOrPRNumber(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
@@ -1752,32 +1756,32 @@ func (h *CommandHandler) Pin(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to pin issue: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to pin issue: %v", err), nil)
 		return nil
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("📌 Pinned issue #%d.", num), nil)
+	_, err = m.ReplyText(c, fmt.Sprintf("📌 Pinned issue #%d.", num), nil)
 	return err
 }
 
-func (h *CommandHandler) Unpin(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Unpin(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	num, err := h.resolveIssueOrPRNumber(ctx)
+	num, err := h.resolveIssueOrPRNumber(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
@@ -1787,14 +1791,14 @@ func (h *CommandHandler) Unpin(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to unpin issue: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to unpin issue: %v", err), nil)
 		return nil
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("📌 Unpinned issue #%d.", num), nil)
+	_, err = m.ReplyText(c, fmt.Sprintf("📌 Unpinned issue #%d.", num), nil)
 	return err
 }
 
@@ -1811,25 +1815,25 @@ func (h *CommandHandler) executeGraphQL(ctx context.Context, client *github.Clie
 	return err
 }
 
-func (h *CommandHandler) RequestChanges(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) RequestChanges(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	num, err := h.resolveIssueOrPRNumber(ctx)
+	num, err := h.resolveIssueOrPRNumber(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	cmdText := ctx.EffectiveMessage.Text
+	cmdText := m.GetText()
 	body := strings.TrimSpace(strings.TrimPrefix(cmdText, "/requestchanges"))
 	if strings.HasPrefix(body, "@") {
 		spaceIdx := strings.Index(body, " ")
@@ -1845,41 +1849,41 @@ func (h *CommandHandler) RequestChanges(b *gotgbot.Bot, ctx *ext.Context) error 
 	}
 
 	review := &github.PullRequestReviewRequest{
-		Event: github.Ptr("REQUEST_CHANGES"),
-		Body:  github.Ptr(body),
+		Event: new("REQUEST_CHANGES"),
+		Body:  new(body),
 	}
 	_, _, err = client.PullRequests.CreateReview(context.Background(), owner, repo, num, review)
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to request changes: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to request changes: %v", err), nil)
 		return nil
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("✏️ Requested changes on PR #%d.", num), nil)
+	_, err = m.ReplyText(c, fmt.Sprintf("✏️ Requested changes on PR #%d.", num), nil)
 	return err
 }
 
-func (h *CommandHandler) Merge(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Merge(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	num, err := h.resolveIssueOrPRNumber(ctx)
+	num, err := h.resolveIssueOrPRNumber(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	args := ctx.Args()
+	args := append([]string{"/"}, m.ArgsList()...)
 	method := "merge"
 	if len(args) > 1 {
 		methodArg := strings.ToLower(args[1])
@@ -1890,41 +1894,41 @@ func (h *CommandHandler) Merge(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	_, _, err = client.PullRequests.Merge(context.Background(), owner, repo, num, "", &github.PullRequestOptions{MergeMethod: method})
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to merge PR: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to merge PR: %v", err), nil)
 		return nil
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("✅ Merged PR #%d using strategy: <b>%s</b>.", num, method), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, fmt.Sprintf("✅ Merged PR #%d using strategy: <b>%s</b>.", num, method), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) Draft(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Draft(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	num, err := h.resolveIssueOrPRNumber(ctx)
+	num, err := h.resolveIssueOrPRNumber(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
 	pr, _, err := client.PullRequests.Get(context.Background(), owner, repo, num)
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to fetch PR: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to fetch PR: %v", err), nil)
 		return nil
 	}
 
@@ -1933,38 +1937,38 @@ func (h *CommandHandler) Draft(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	err = h.executeGraphQL(context.Background(), client, query, variables)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to convert PR to draft: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to convert PR to draft: %v", err), nil)
 		return nil
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("✅ PR #%d converted to Draft.", num), nil)
+	_, err = m.ReplyText(c, fmt.Sprintf("✅ PR #%d converted to Draft.", num), nil)
 	return err
 }
 
-func (h *CommandHandler) Ready(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Ready(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	num, err := h.resolveIssueOrPRNumber(ctx)
+	num, err := h.resolveIssueOrPRNumber(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
 	pr, _, err := client.PullRequests.Get(context.Background(), owner, repo, num)
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to fetch PR: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to fetch PR: %v", err), nil)
 		return nil
 	}
 
@@ -1973,28 +1977,28 @@ func (h *CommandHandler) Ready(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	err = h.executeGraphQL(context.Background(), client, query, variables)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to mark PR as ready: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to mark PR as ready: %v", err), nil)
 		return nil
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("✅ PR #%d marked as Ready for Review.", num), nil)
+	_, err = m.ReplyText(c, fmt.Sprintf("✅ PR #%d marked as Ready for Review.", num), nil)
 	return err
 }
 
-func (h *CommandHandler) Checks(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Checks(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
 	var sha string
-	num, err := h.resolveIssueOrPRNumber(ctx)
+	num, err := h.resolveIssueOrPRNumber(m)
 	if err == nil {
 		pr, _, err := client.PullRequests.Get(context.Background(), owner, repo, num)
 		if err == nil {
@@ -2013,16 +2017,16 @@ func (h *CommandHandler) Checks(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	if sha == "" {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Could not resolve head commit SHA.", nil)
+		_, _ = m.ReplyText(c, "Could not resolve head commit SHA.", nil)
 		return nil
 	}
 
 	checks, _, err := client.Checks.ListCheckRunsForRef(context.Background(), owner, repo, sha, nil)
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to list checks: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to list checks: %v", err), nil)
 		return nil
 	}
 
@@ -2048,34 +2052,34 @@ func (h *CommandHandler) Checks(b *gotgbot.Bot, ctx *ext.Context) error {
 		}
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, msg.String(), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) Files(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Files(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	num, err := h.resolveIssueOrPRNumber(ctx)
+	num, err := h.resolveIssueOrPRNumber(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
 	files, _, err := client.PullRequests.ListFiles(context.Background(), owner, repo, num, &github.ListOptions{PerPage: 20})
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to list changed files: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to list changed files: %v", err), nil)
 		return nil
 	}
 
@@ -2085,34 +2089,34 @@ func (h *CommandHandler) Files(b *gotgbot.Bot, ctx *ext.Context) error {
 		msg.WriteString(fmt.Sprintf("• %s (<b>+%d</b> / <b>-%d</b>)\n", html.EscapeString(f.GetFilename()), f.GetAdditions(), f.GetDeletions()))
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, msg.String(), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) Diff(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Diff(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	num, err := h.resolveIssueOrPRNumber(ctx)
+	num, err := h.resolveIssueOrPRNumber(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
 	pr, _, err := client.PullRequests.Get(context.Background(), owner, repo, num)
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to fetch PR: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to fetch PR: %v", err), nil)
 		return nil
 	}
 
@@ -2124,34 +2128,34 @@ func (h *CommandHandler) Diff(b *gotgbot.Bot, ctx *ext.Context) error {
 		num, pr.GetChangedFiles(), pr.GetAdditions(), pr.GetDeletions(),
 	)
 
-	_, err = ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) Reviews(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Reviews(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	num, err := h.resolveIssueOrPRNumber(ctx)
+	num, err := h.resolveIssueOrPRNumber(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
 	reviews, _, err := client.PullRequests.ListReviews(context.Background(), owner, repo, num, nil)
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to list reviews: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to list reviews: %v", err), nil)
 		return nil
 	}
 
@@ -2165,34 +2169,34 @@ func (h *CommandHandler) Reviews(b *gotgbot.Bot, ctx *ext.Context) error {
 		}
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, msg.String(), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) Mergeable(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Mergeable(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	num, err := h.resolveIssueOrPRNumber(ctx)
+	num, err := h.resolveIssueOrPRNumber(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
 	pr, _, err := client.PullRequests.Get(context.Background(), owner, repo, num)
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to fetch PR details: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to fetch PR details: %v", err), nil)
 		return nil
 	}
 
@@ -2210,31 +2214,31 @@ func (h *CommandHandler) Mergeable(b *gotgbot.Bot, ctx *ext.Context) error {
 		num, status, html.EscapeString(pr.GetMergeableState()),
 	)
 
-	_, err = ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) RequestReview(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) RequestReview(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	num, err := h.resolveIssueOrPRNumber(ctx)
+	num, err := h.resolveIssueOrPRNumber(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	args := ctx.Args()
+	args := append([]string{"/"}, m.ArgsList()...)
 	if len(args) < 2 {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Usage: /request @username", nil)
+		_, _ = m.ReplyText(c, "Usage: /request @username", nil)
 		return nil
 	}
 	target := strings.TrimPrefix(args[1], "@")
@@ -2243,42 +2247,42 @@ func (h *CommandHandler) RequestReview(b *gotgbot.Bot, ctx *ext.Context) error {
 		Reviewers: []string{target},
 	})
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to request reviewer: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to request reviewer: %v", err), nil)
 		return nil
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("✅ Review requested from <b>@%s</b> for PR #%d.", html.EscapeString(target), num), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, fmt.Sprintf("✅ Review requested from <b>@%s</b> for PR #%d.", html.EscapeString(target), num), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) Commit(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Commit(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	args := ctx.Args()
+	args := append([]string{"/"}, m.ArgsList()...)
 	if len(args) < 2 {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Usage: /commit SHA", nil)
+		_, _ = m.ReplyText(c, "Usage: /commit SHA", nil)
 		return nil
 	}
 	sha := args[1]
 
 	commit, _, err := client.Repositories.GetCommit(context.Background(), owner, repo, sha, nil)
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to fetch commit: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to fetch commit: %v", err), nil)
 		return nil
 	}
 
@@ -2295,19 +2299,19 @@ func (h *CommandHandler) Commit(b *gotgbot.Bot, ctx *ext.Context) error {
 		html.EscapeString(commit.GetHTMLURL()),
 	)
 
-	_, err = ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) Commits(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Commits(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
@@ -2315,10 +2319,10 @@ func (h *CommandHandler) Commits(b *gotgbot.Bot, ctx *ext.Context) error {
 		ListOptions: github.ListOptions{PerPage: 10},
 	})
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to list commits: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to list commits: %v", err), nil)
 		return nil
 	}
 
@@ -2332,25 +2336,25 @@ func (h *CommandHandler) Commits(b *gotgbot.Bot, ctx *ext.Context) error {
 		msg.WriteString(fmt.Sprintf("• <code>%s</code> - %s by <b>%s</b>\n", html.EscapeString(shortSHA), html.EscapeString(strings.Split(c.GetCommit().GetMessage(), "\n")[0]), html.EscapeString(c.GetCommit().GetAuthor().GetName())))
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, msg.String(), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) Compare(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Compare(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	args := ctx.Args()
+	args := append([]string{"/"}, m.ArgsList()...)
 	if len(args) < 3 {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Usage: /compare branch1 branch2", nil)
+		_, _ = m.ReplyText(c, "Usage: /compare branch1 branch2", nil)
 		return nil
 	}
 	base := args[1]
@@ -2358,10 +2362,10 @@ func (h *CommandHandler) Compare(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	comp, _, err := client.Repositories.CompareCommits(context.Background(), owner, repo, base, head, nil)
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to compare: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to compare: %v", err), nil)
 		return nil
 	}
 
@@ -2381,19 +2385,19 @@ func (h *CommandHandler) Compare(b *gotgbot.Bot, ctx *ext.Context) error {
 		html.EscapeString(comp.GetHTMLURL()),
 	)
 
-	_, err = ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) Actions(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Actions(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
@@ -2401,10 +2405,10 @@ func (h *CommandHandler) Actions(b *gotgbot.Bot, ctx *ext.Context) error {
 		ListOptions: github.ListOptions{PerPage: 10},
 	})
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to list workflow runs: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to list workflow runs: %v", err), nil)
 		return nil
 	}
 
@@ -2430,25 +2434,25 @@ func (h *CommandHandler) Actions(b *gotgbot.Bot, ctx *ext.Context) error {
 		}
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, msg.String(), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) RunWorkflow(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) RunWorkflow(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	args := ctx.Args()
+	args := append([]string{"/"}, m.ArgsList()...)
 	if len(args) < 2 {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Usage: /run workflow.yml [branch]", nil)
+		_, _ = m.ReplyText(c, "Usage: /run workflow.yml [branch]", nil)
 		return nil
 	}
 	workflowFile := args[1]
@@ -2473,156 +2477,156 @@ func (h *CommandHandler) RunWorkflow(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	_, _, err = client.Actions.CreateWorkflowDispatchEventByFileName(context.Background(), owner, repo, workflowFile, req)
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to trigger workflow: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to trigger workflow: %v", err), nil)
 		return nil
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("🚀 Triggered workflow <b>%s</b> on branch <b>%s</b>.", html.EscapeString(workflowFile), html.EscapeString(ref)), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, fmt.Sprintf("🚀 Triggered workflow <b>%s</b> on branch <b>%s</b>.", html.EscapeString(workflowFile), html.EscapeString(ref)), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) RerunWorkflow(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) RerunWorkflow(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	num, err := h.resolveIssueOrPRNumber(ctx)
+	num, err := h.resolveIssueOrPRNumber(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
 	_, err = client.Actions.RerunWorkflowByID(context.Background(), owner, repo, int64(num))
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to rerun workflow: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to rerun workflow: %v", err), nil)
 		return nil
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("🔄 Workflow run #%d rerunning.", num), nil)
+	_, err = m.ReplyText(c, fmt.Sprintf("🔄 Workflow run #%d rerunning.", num), nil)
 	return err
 }
 
-func (h *CommandHandler) CancelWorkflow(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) CancelWorkflow(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	num, err := h.resolveIssueOrPRNumber(ctx)
+	num, err := h.resolveIssueOrPRNumber(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
 	_, err = client.Actions.CancelWorkflowRunByID(context.Background(), owner, repo, int64(num))
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to cancel workflow: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to cancel workflow: %v", err), nil)
 		return nil
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("⛔ Workflow run #%d cancelled.", num), nil)
+	_, err = m.ReplyText(c, fmt.Sprintf("⛔ Workflow run #%d cancelled.", num), nil)
 	return err
 }
 
-func (h *CommandHandler) WorkflowLogs(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) WorkflowLogs(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	num, err := h.resolveIssueOrPRNumber(ctx)
+	num, err := h.resolveIssueOrPRNumber(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
 	run, _, err := client.Actions.GetWorkflowRunByID(context.Background(), owner, repo, int64(num))
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to get workflow run: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to get workflow run: %v", err), nil)
 		return nil
 	}
 
 	msg := fmt.Sprintf("📖 <a href=\"%s\">Open workflow logs for run #%d</a>", html.EscapeString(run.GetHTMLURL()+"/jobs"), num)
-	_, err = ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) Release(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Release(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	args := ctx.Args()
+	args := append([]string{"/"}, m.ArgsList()...)
 	if len(args) > 1 && strings.ToLower(args[1]) == "create" {
 		if len(args) < 3 {
-			_, _ = ctx.EffectiveMessage.Reply(b, "Usage: /release create v1.0.0", nil)
+			_, _ = m.ReplyText(c, "Usage: /release create v1.0.0", nil)
 			return nil
 		}
 		tagName := args[2]
 
 		req := github.CreateReleaseRequest{
 			TagName:              tagName,
-			Name:                 github.Ptr(tagName),
-			GenerateReleaseNotes: github.Ptr(true),
+			Name:                 new(tagName),
+			GenerateReleaseNotes: new(true),
 		}
 
 		rel, _, err := client.Repositories.CreateRelease(context.Background(), owner, repo, req)
 		if err != nil {
-			if h.handleAuthError(b, ctx, err) {
+			if h.handleAuthError(c, m, err) {
 				return nil
 			}
-			_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to create release: %v", err), nil)
+			_, _ = m.ReplyText(c, fmt.Sprintf("Failed to create release: %v", err), nil)
 			return nil
 		}
 
-		_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("🚀 Created release <b>%s</b>: <a href=\"%s\">View Release</a>", html.EscapeString(rel.GetTagName()), html.EscapeString(rel.GetHTMLURL())), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+		_, err = m.ReplyText(c, fmt.Sprintf("🚀 Created release <b>%s</b>: <a href=\"%s\">View Release</a>", html.EscapeString(rel.GetTagName()), html.EscapeString(rel.GetHTMLURL())), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 		return err
 	}
 
 	rel, _, err := client.Repositories.GetLatestRelease(context.Background(), owner, repo)
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to fetch latest release or none found: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to fetch latest release or none found: %v", err), nil)
 		return nil
 	}
 
@@ -2652,24 +2656,24 @@ func (h *CommandHandler) Release(b *gotgbot.Bot, ctx *ext.Context) error {
 		msg += fmt.Sprintf("\n\n<b>Notes:</b>\n<i>%s</i>", html.EscapeString(body))
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) Changelog(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Changelog(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
 	tagName := "vNext"
-	args := ctx.Args()
+	args := append([]string{"/"}, m.ArgsList()...)
 	if len(args) > 1 {
 		tagName = args[1]
 	}
@@ -2680,10 +2684,10 @@ func (h *CommandHandler) Changelog(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	notes, _, err := client.Repositories.GenerateReleaseNotes(context.Background(), owner, repo, notesReq)
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to generate changelog: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to generate changelog: %v", err), nil)
 		return nil
 	}
 
@@ -2692,23 +2696,23 @@ func (h *CommandHandler) Changelog(b *gotgbot.Bot, ctx *ext.Context) error {
 		msg = msg[:4000] + "..."
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) CreateDiscussion(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) CreateDiscussion(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	text := ctx.EffectiveMessage.Text
+	text := m.GetText()
 	parts := strings.SplitN(text, "\n", 2)
 	titlePart := ""
 	bodyPart := ""
@@ -2732,7 +2736,7 @@ func (h *CommandHandler) CreateDiscussion(b *gotgbot.Bot, ctx *ext.Context) erro
 	}
 
 	if titlePart == "" {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Usage: /discussion Title\n\n[Optional Body]", nil)
+		_, _ = m.ReplyText(c, "Usage: /discussion Title\n\n[Optional Body]", nil)
 		return nil
 	}
 
@@ -2756,7 +2760,7 @@ func (h *CommandHandler) CreateDiscussion(b *gotgbot.Bot, ctx *ext.Context) erro
 
 	req, err := client.NewRequest(context.Background(), "POST", "graphql", body)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to query repository details: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to query repository details: %v", err), nil)
 		return nil
 	}
 
@@ -2776,19 +2780,19 @@ func (h *CommandHandler) CreateDiscussion(b *gotgbot.Bot, ctx *ext.Context) erro
 
 	_, err = client.Do(req, &respData)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to execute GraphQL: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to execute GraphQL: %v", err), nil)
 		return nil
 	}
 
 	repoID := respData.Data.Repository.ID
 	if repoID == "" {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Failed to resolve repository ID or discussions might not be enabled.", nil)
+		_, _ = m.ReplyText(c, "Failed to resolve repository ID or discussions might not be enabled.", nil)
 		return nil
 	}
 
 	categories := respData.Data.Repository.DiscussionCategories.Nodes
 	if len(categories) == 0 {
-		_, _ = ctx.EffectiveMessage.Reply(b, "No discussion categories found. Ensure Discussions are enabled on the repository settings.", nil)
+		_, _ = m.ReplyText(c, "No discussion categories found. Ensure Discussions are enabled on the repository settings.", nil)
 		return nil
 	}
 
@@ -2821,7 +2825,7 @@ func (h *CommandHandler) CreateDiscussion(b *gotgbot.Bot, ctx *ext.Context) erro
 
 	reqCreate, err := client.NewRequest(context.Background(), "POST", "graphql", bodyCreate)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Failed to build create discussion request.", nil)
+		_, _ = m.ReplyText(c, "Failed to build create discussion request.", nil)
 		return nil
 	}
 
@@ -2838,30 +2842,30 @@ func (h *CommandHandler) CreateDiscussion(b *gotgbot.Bot, ctx *ext.Context) erro
 
 	_, err = client.Do(reqCreate, &respCreate)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to create discussion: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to create discussion: %v", err), nil)
 		return nil
 	}
 
 	disc := respCreate.Data.CreateDiscussion.Discussion
-	_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("✅ Created discussion <b>#%d</b>: <a href=\"%s\">View Discussion</a>", disc.Number, html.EscapeString(disc.URL)), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, fmt.Sprintf("✅ Created discussion <b>#%d</b>: <a href=\"%s\">View Discussion</a>", disc.Number, html.EscapeString(disc.URL)), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) Answered(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Answered(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	commentID, err := h.resolveCommentID(ctx)
+	commentID, err := h.resolveCommentID(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
@@ -2897,7 +2901,7 @@ func (h *CommandHandler) Answered(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	req, err := client.NewRequest(context.Background(), "POST", "graphql", body)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Failed to query comment details.", nil)
+		_, _ = m.ReplyText(c, "Failed to query comment details.", nil)
 		return nil
 	}
 
@@ -2926,7 +2930,7 @@ func (h *CommandHandler) Answered(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	_, err = client.Do(req, &respData)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to fetch comments: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to fetch comments: %v", err), nil)
 		return nil
 	}
 
@@ -2950,7 +2954,7 @@ func (h *CommandHandler) Answered(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	if commentNodeID == "" {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Could not find comment node ID on GitHub.", nil)
+		_, _ = m.ReplyText(c, "Could not find comment node ID on GitHub.", nil)
 		return nil
 	}
 
@@ -2969,35 +2973,35 @@ func (h *CommandHandler) Answered(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	reqAnswer, err := client.NewRequest(context.Background(), "POST", "graphql", bodyAnswer)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Failed to build answer mutation.", nil)
+		_, _ = m.ReplyText(c, "Failed to build answer mutation.", nil)
 		return nil
 	}
 
 	_, err = client.Do(reqAnswer, nil)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to mark comment as answer: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to mark comment as answer: %v", err), nil)
 		return nil
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, "✅ Discussion marked as answered!", nil)
+	_, err = m.ReplyText(c, "✅ Discussion marked as answered!", nil)
 	return err
 }
 
-func (h *CommandHandler) Find(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Find(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	args := ctx.Args()
+	args := append([]string{"/"}, m.ArgsList()...)
 	if len(args) < 2 {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Usage: /find keyword", nil)
+		_, _ = m.ReplyText(c, "Usage: /find keyword", nil)
 		return nil
 	}
 	keyword := strings.Join(args[1:], " ")
@@ -3007,10 +3011,10 @@ func (h *CommandHandler) Find(b *gotgbot.Bot, ctx *ext.Context) error {
 		ListOptions: github.ListOptions{PerPage: 5},
 	})
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Search failed: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Search failed: %v", err), nil)
 		return nil
 	}
 
@@ -3024,25 +3028,25 @@ func (h *CommandHandler) Find(b *gotgbot.Bot, ctx *ext.Context) error {
 		}
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, msg.String(), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) PRSearch(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) PRSearch(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	args := ctx.Args()
+	args := append([]string{"/"}, m.ArgsList()...)
 	if len(args) < 2 {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Usage: /pr keyword", nil)
+		_, _ = m.ReplyText(c, "Usage: /pr keyword", nil)
 		return nil
 	}
 	keyword := strings.Join(args[1:], " ")
@@ -3052,10 +3056,10 @@ func (h *CommandHandler) PRSearch(b *gotgbot.Bot, ctx *ext.Context) error {
 		ListOptions: github.ListOptions{PerPage: 5},
 	})
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("PR search failed: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("PR search failed: %v", err), nil)
 		return nil
 	}
 
@@ -3069,25 +3073,25 @@ func (h *CommandHandler) PRSearch(b *gotgbot.Bot, ctx *ext.Context) error {
 		}
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, msg.String(), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) SearchCode(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) SearchCode(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	args := ctx.Args()
+	args := append([]string{"/"}, m.ArgsList()...)
 	if len(args) < 2 {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Usage: /search keyword", nil)
+		_, _ = m.ReplyText(c, "Usage: /search keyword", nil)
 		return nil
 	}
 	keyword := strings.Join(args[1:], " ")
@@ -3097,10 +3101,10 @@ func (h *CommandHandler) SearchCode(b *gotgbot.Bot, ctx *ext.Context) error {
 		ListOptions: github.ListOptions{PerPage: 5},
 	})
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Code search failed: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Code search failed: %v", err), nil)
 		return nil
 	}
 
@@ -3114,7 +3118,7 @@ func (h *CommandHandler) SearchCode(b *gotgbot.Bot, ctx *ext.Context) error {
 		}
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, msg.String(), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -3133,104 +3137,104 @@ func (h *CommandHandler) findNotificationThreadID(ctx context.Context, client *g
 	return "", errors.New("notification not found")
 }
 
-func (h *CommandHandler) Mute(b *gotgbot.Bot, ctx *ext.Context) error {
-	threadID := ctx.EffectiveMessage.MessageThreadId
-	err := h.DB.MuteThread(context.Background(), ctx.EffectiveChat.Id, threadID)
+func (h *CommandHandler) Mute(c *gotdbot.Client, m *gotdbot.Message) error {
+	threadID := getTopicID(m)
+	err := h.DB.MuteThread(context.Background(), m.ChatId, threadID)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Failed to mute this thread.", nil)
+		_, _ = m.ReplyText(c, "Failed to mute this thread.", nil)
 		return nil
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, "🔕 This thread has been muted. You will no longer receive notifications here.", nil)
+	_, err = m.ReplyText(c, "🔕 This thread has been muted. You will no longer receive notifications here.", nil)
 	return err
 }
 
-func (h *CommandHandler) Done(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Done(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	num, err := h.resolveIssueOrPRNumber(ctx)
+	num, err := h.resolveIssueOrPRNumber(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
 	threadID, err := h.findNotificationThreadID(context.Background(), client, owner, repo, num)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Could not find a corresponding GitHub notification for this issue/PR.", nil)
+		_, _ = m.ReplyText(c, "Could not find a corresponding GitHub notification for this issue/PR.", nil)
 		return nil
 	}
 
 	_, err = client.Activity.MarkThreadDone(context.Background(), threadID)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to mark as done: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to mark as done: %v", err), nil)
 		return nil
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, "✅ Marked notification as done.", nil)
+	_, err = m.ReplyText(c, "✅ Marked notification as done.", nil)
 	return err
 }
 
-func (h *CommandHandler) Read(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Read(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
-	num, err := h.resolveIssueOrPRNumber(ctx)
+	num, err := h.resolveIssueOrPRNumber(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
 	threadID, err := h.findNotificationThreadID(context.Background(), client, owner, repo, num)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "Could not find a corresponding GitHub notification for this issue/PR.", nil)
+		_, _ = m.ReplyText(c, "Could not find a corresponding GitHub notification for this issue/PR.", nil)
 		return nil
 	}
 
 	_, err = client.Activity.MarkThreadRead(context.Background(), threadID)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to mark as read: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to mark as read: %v", err), nil)
 		return nil
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, "✅ Marked notification as read.", nil)
+	_, err = m.ReplyText(c, "✅ Marked notification as read.", nil)
 	return err
 }
 
-func (h *CommandHandler) Stats(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Stats(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
 	repoInfo, _, err := client.Repositories.Get(context.Background(), owner, repo)
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to fetch statistics: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to fetch statistics: %v", err), nil)
 		return nil
 	}
 
@@ -3287,28 +3291,28 @@ func (h *CommandHandler) Stats(b *gotgbot.Bot, ctx *ext.Context) error {
 		html.EscapeString(lastCommit),
 	)
 
-	_, err = ctx.EffectiveMessage.Reply(b, msg, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
-func (h *CommandHandler) Activity(b *gotgbot.Bot, ctx *ext.Context) error {
-	client, err := h.getAuthenticatedClient(b, ctx)
+func (h *CommandHandler) Activity(c *gotdbot.Client, m *gotdbot.Message) error {
+	client, err := h.getAuthenticatedClient(c, m)
 	if err != nil {
 		return nil
 	}
 
-	owner, repo, err := h.resolveRepoContext(ctx)
+	owner, repo, err := h.resolveRepoContext(m)
 	if err != nil {
-		_, _ = ctx.EffectiveMessage.Reply(b, "⚠️ "+err.Error(), nil)
+		_, _ = m.ReplyText(c, "⚠️ "+err.Error(), nil)
 		return nil
 	}
 
 	events, _, err := client.Activity.ListRepositoryEvents(context.Background(), owner, repo, &github.ListOptions{PerPage: 10})
 	if err != nil {
-		if h.handleAuthError(b, ctx, err) {
+		if h.handleAuthError(c, m, err) {
 			return nil
 		}
-		_, _ = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Failed to list activity: %v", err), nil)
+		_, _ = m.ReplyText(c, fmt.Sprintf("Failed to list activity: %v", err), nil)
 		return nil
 	}
 
@@ -3324,6 +3328,6 @@ func (h *CommandHandler) Activity(b *gotgbot.Bot, ctx *ext.Context) error {
 		}
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, msg.String(), &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }

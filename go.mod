@@ -3,16 +3,17 @@ module github-webhook
 go 1.26.0
 
 require (
+	github.com/AshokShau/gotdbot v0.9.5
 	github.com/JohannesKaufmann/html-to-markdown/v2 v2.5.2
-	github.com/PaulSonOfLars/gotgbot/v2 v2.0.0-rc.36
 	github.com/google/go-github/v90 v90.0.0
 	github.com/joho/godotenv v1.5.1
-	go.mongodb.org/mongo-driver/v2 v2.8.0
+	go.mongodb.org/mongo-driver/v2 v2.8.1
 	golang.org/x/oauth2 v0.36.0
 )
 
 require (
 	github.com/JohannesKaufmann/dom v0.3.1 // indirect
+	github.com/ebitengine/purego v0.10.2 // indirect
 	github.com/google/go-querystring v1.2.0 // indirect
 	github.com/klauspost/compress v1.19.2 // indirect
 	github.com/xdg-go/pbkdf2 v1.0.0 // indirect

@@ -16,19 +16,19 @@ import (
 	"github-webhook/internal/models"
 	"github-webhook/internal/utils"
 
-	"github.com/PaulSonOfLars/gotgbot/v2"
+	"github.com/AshokShau/gotdbot"
 	"github.com/google/go-github/v90/github"
 )
 
 type WebhookServer struct {
 	Config       *config.Config
 	DB           *db.DB
-	Bot          *gotgbot.Bot
+	Bot          *gotdbot.Client
 	ContextCache *cache.Cache[string, models.MessageContext]  // Key: "chat_id:message_id"
 	ActionCache  *cache.Cache[string, models.PRActionContext] // Key: UUID
 }
 
-func NewWebhookServer(cfg *config.Config, database *db.DB, bot *gotgbot.Bot, ctxCache *cache.Cache[string, models.MessageContext], actionCache *cache.Cache[string, models.PRActionContext]) *WebhookServer {
+func NewWebhookServer(cfg *config.Config, database *db.DB, bot *gotdbot.Client, ctxCache *cache.Cache[string, models.MessageContext], actionCache *cache.Cache[string, models.PRActionContext]) *WebhookServer {
 	return &WebhookServer{
 		Config:       cfg,
 		DB:           database,
@@ -39,10 +39,10 @@ func NewWebhookServer(cfg *config.Config, database *db.DB, bot *gotgbot.Bot, ctx
 }
 
 func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
-	//log.Printf("Received webhook request: %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
 	// Path: /webhook/<token>
 	var chatID int64
-	var topicID int64
+	var topicID int32
+
 	path := r.URL.Path
 	if strings.HasPrefix(path, "/webhook/") && len(path) > 9 {
 		token := path[9:] // strip "/webhook/"
@@ -52,7 +52,8 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 				parts := strings.Split(decrypted, ":")
 				if len(parts) == 2 {
 					chatID, _ = strconv.ParseInt(parts[0], 10, 64)
-					topicID, _ = strconv.ParseInt(parts[1], 10, 64)
+					topicID64, _ := strconv.ParseInt(parts[1], 10, 32)
+					topicID = int32(topicID64)
 				}
 			} else {
 				chatID, _ = strconv.ParseInt(decrypted, 10, 64)
@@ -95,16 +96,7 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func (s *WebhookServer) processEvent(event any, chatID int64, topicID int64, hookID int64) {
-	/*
-		chat, err := s.DB.GetChat(context.Background(), chatID)
-		if err == nil {
-			if slices.Contains(chat.MutedThreads, topicID) {
-					return
-				}
-		}
-	*/
-
+func (s *WebhookServer) processEvent(event any, chatID int64, topicID int32, hookID int64) {
 	if e, ok := event.(*github.RepositoryEvent); ok && e.GetAction() == "renamed" {
 		newFullName := e.GetRepo().GetFullName()
 		if newFullName != "" && hookID != 0 {
@@ -123,27 +115,27 @@ func (s *WebhookServer) processEvent(event any, chatID int64, topicID int64, hoo
 	}
 
 	msg = normalizeMessage(msg)
-	var replyMarkup gotgbot.ReplyMarkup
+
+	opts := &gotdbot.SendTextMessageOpts{
+		ParseMode:             gotdbot.ParseModeMarkdownV2,
+		DisableWebPagePreview: true,
+	}
+
+	if topicID != 0 {
+		opts.TopicId = &gotdbot.MessageTopicForum{ForumTopicId: topicID}
+	}
+
 	if markup != nil {
-		replyMarkup = markup
+		opts.ReplyMarkup = markup
 	}
 
-	opts := &gotgbot.SendMessageOpts{
-		ParseMode:       "MarkdownV2",
-		MessageThreadId: topicID,
-		LinkPreviewOptions: &gotgbot.LinkPreviewOptions{
-			IsDisabled: true,
-		},
-		ReplyMarkup: replyMarkup,
-	}
-
-	sentMsg, err := s.Bot.SendMessage(chatID, msg, opts)
+	sentMsg, err := s.Bot.SendTextMessage(chatID, msg, opts)
 	if err != nil {
 		log.Printf("Error sending message to chat %d: %v", chatID, err)
 		return
 	}
 
-	s.storeMessageContext(sentMsg.MessageId, chatID, event)
+	s.storeMessageContext(sentMsg.Id, chatID, event)
 }
 
 // normalizeMessage trims trailing spaces on each line, collapses 3+ consecutive newlines into 2
@@ -214,7 +206,7 @@ func (s *WebhookServer) storeMessageContext(messageID int64, chatID int64, event
 	s.ContextCache.Set(key, ctx, 48*time.Hour)
 }
 
-func (s *WebhookServer) formatMessage(event any) (string, *gotgbot.InlineKeyboardMarkup) {
+func (s *WebhookServer) formatMessage(event any) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	switch e := event.(type) {
 	case *github.PushEvent:
 		return FormatPushEvent(e)

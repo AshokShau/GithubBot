@@ -10,8 +10,7 @@ import (
 	"github-webhook/internal/models"
 	"github-webhook/internal/utils"
 
-	"github.com/PaulSonOfLars/gotgbot/v2"
-	"github.com/PaulSonOfLars/gotgbot/v2/ext"
+	"github.com/AshokShau/gotdbot"
 	gh "github.com/google/go-github/v90/github"
 )
 
@@ -31,28 +30,28 @@ func NewReplyHandler(database *db.DB, factory *github.ClientFactory, key string,
 	}
 }
 
-func (h *ReplyHandler) HandleReply(b *gotgbot.Bot, ctx *ext.Context) error {
-	msg := ctx.EffectiveMessage
-	if msg.ReplyToMessage == nil {
+func (h *ReplyHandler) HandleReply(c *gotdbot.Client, msg *gotdbot.Message) error {
+	replyToID := msg.ReplyToMessageID()
+	if replyToID == 0 {
 		return nil
 	}
 
-	key := fmt.Sprintf("%d:%d", ctx.EffectiveChat.Id, msg.ReplyToMessage.MessageId)
+	key := fmt.Sprintf("%d:%d", msg.ChatId, replyToID)
 	mContext, found := h.ContextCache.Get(key)
 	if !found {
 		return nil
 	}
 
-	commentBody := msg.Text
-	user, err := h.DB.GetUserByTelegramID(context.Background(), ctx.EffectiveUser.Id)
+	commentBody := msg.GetText()
+	senderID := msg.SenderID()
+	user, err := h.DB.GetUserByTelegramID(context.Background(), senderID)
 	if err != nil || user.EncryptedOAuthToken == "" {
-		// _, _ = msg.Reply(b, "Please connect GitHub account via /connect first.", nil)
 		return nil
 	}
 
 	token, err := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
 	if err != nil {
-		_, _ = msg.Reply(b, "Auth error. Reconnect via /connect", nil)
+		_, _ = msg.ReplyText(c, "Auth error. Reconnect via /connect", nil)
 		return nil
 	}
 

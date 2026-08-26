@@ -6,11 +6,11 @@ import (
 	"log"
 	"strings"
 
-	"github.com/PaulSonOfLars/gotgbot/v2"
+	"github.com/AshokShau/gotdbot"
 	"github.com/google/go-github/v90/github"
 )
 
-func FormatIssuesEvent(event *github.IssuesEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatIssuesEvent(event *github.IssuesEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	repo := event.GetRepo().GetFullName()
 	action := event.GetAction()
 	sender := event.GetSender().GetLogin()
@@ -63,7 +63,7 @@ func FormatIssuesEvent(event *github.IssuesEvent) (string, *gotgbot.InlineKeyboa
 	return FormatMessageWithButton(msg, "View Issue", url)
 }
 
-func FormatPullRequestEvent(event *github.PullRequestEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatPullRequestEvent(event *github.PullRequestEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	repo := event.GetRepo().GetFullName()
 	action := event.GetAction()
 	sender := event.GetSender().GetLogin()
@@ -123,7 +123,7 @@ func FormatPullRequestEvent(event *github.PullRequestEvent) (string, *gotgbot.In
 	return FormatMessageWithButton(msg, "View PR", url)
 }
 
-func FormatPushEvent(event *github.PushEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatPushEvent(event *github.PushEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	repo := event.Repo.GetName()
 	repoURL := event.Repo.GetHTMLURL()
 	branch := strings.TrimPrefix(event.GetRef(), "refs/heads/")
@@ -197,7 +197,7 @@ func FormatPushEvent(event *github.PushEvent) (string, *gotgbot.InlineKeyboardMa
 	return FormatMessageWithButton(msg, "View Commits", compareURL)
 }
 
-func FormatCreateEvent(event *github.CreateEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatCreateEvent(event *github.CreateEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	repo := event.Repo.GetFullName()
 	repoURL := event.Repo.GetHTMLURL()
 	sender := event.Sender.GetLogin()
@@ -226,7 +226,7 @@ func FormatCreateEvent(event *github.CreateEvent) (string, *gotgbot.InlineKeyboa
 	return FormatMessageWithButton(msg, "View Repository", repoURL)
 }
 
-func FormatDeleteEvent(event *github.DeleteEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatDeleteEvent(event *github.DeleteEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	repo := event.Repo.GetFullName()
 	repoURL := event.Repo.GetHTMLURL()
 	sender := event.Sender.GetLogin()
@@ -255,7 +255,7 @@ func FormatDeleteEvent(event *github.DeleteEvent) (string, *gotgbot.InlineKeyboa
 	return FormatMessageWithButton(msg, "View Repository", repoURL)
 }
 
-func FormatForkEvent(event *github.ForkEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatForkEvent(event *github.ForkEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	originalRepo := event.Repo.GetFullName()
 	forkedRepo := event.Forkee.GetFullName()
 	sender := event.Sender.GetLogin()
@@ -271,7 +271,7 @@ func FormatForkEvent(event *github.ForkEvent) (string, *gotgbot.InlineKeyboardMa
 	return FormatMessageWithButton(msg, "View Fork", fmt.Sprintf("https://github.com/%s", EscapeMarkdownV2URL(forkedRepo)))
 }
 
-func FormatCommitCommentEvent(event *github.CommitCommentEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatCommitCommentEvent(event *github.CommitCommentEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	comment := event.Comment.GetBody()
 	commitSHA := event.Comment.GetCommitID()
 	repo := event.Repo.GetFullName()
@@ -308,7 +308,7 @@ func FormatCommitCommentEvent(event *github.CommitCommentEvent) (string, *gotgbo
 	return FormatMessageWithButton(msg, "View Comment", event.Comment.GetHTMLURL())
 }
 
-func FormatPublicEvent(event *github.PublicEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatPublicEvent(event *github.PublicEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	msg := fmt.Sprintf(
 		"🔓 *Repository made public*\n\n"+
 			"*Name:* %s\n"+
@@ -319,7 +319,7 @@ func FormatPublicEvent(event *github.PublicEvent) (string, *gotgbot.InlineKeyboa
 	return FormatMessageWithButton(msg, "View Repository", event.Repo.GetHTMLURL())
 }
 
-func FormatIssueCommentEvent(event *github.IssueCommentEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatIssueCommentEvent(event *github.IssueCommentEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	action := event.GetAction()
 	issue := event.Issue
 	comment := event.Comment
@@ -354,7 +354,7 @@ func FormatIssueCommentEvent(event *github.IssueCommentEvent) (string, *gotgbot.
 	return FormatMessageWithButton(msg, "View Comment", comment.GetHTMLURL())
 }
 
-func FormatMemberEvent(event *github.MemberEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatMemberEvent(event *github.MemberEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	action := event.GetAction()
 	member := event.Member.GetLogin()
 	repo := event.Repo.GetFullName()
@@ -393,7 +393,7 @@ func FormatMemberEvent(event *github.MemberEvent) (string, *gotgbot.InlineKeyboa
 	return FormatMessageWithButton(msg, "View Repository", event.Repo.GetHTMLURL())
 }
 
-func FormatRepositoryEvent(event *github.RepositoryEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatRepositoryEvent(event *github.RepositoryEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	action := event.GetAction()
 	repo := event.Repo.GetFullName()
 	url := event.Repo.GetHTMLURL()
@@ -427,7 +427,7 @@ func FormatRepositoryEvent(event *github.RepositoryEvent) (string, *gotgbot.Inli
 	return FormatMessageWithButton(msg, "View Repository", url)
 }
 
-func FormatReleaseEvent(event *github.ReleaseEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatReleaseEvent(event *github.ReleaseEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	action := event.GetAction()
 	release := event.GetRelease()
 	repo := event.GetRepo().GetFullName()
@@ -468,7 +468,7 @@ func FormatReleaseEvent(event *github.ReleaseEvent) (string, *gotgbot.InlineKeyb
 	return FormatMessageWithButton(msg, "View Release", release.GetHTMLURL())
 }
 
-func FormatWatchEvent(event *github.WatchEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatWatchEvent(event *github.WatchEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	action := event.GetAction()
 	log.Printf("Watch action: %s", action)
 	if action == "started" {
@@ -495,7 +495,7 @@ func FormatWatchEvent(event *github.WatchEvent) (string, *gotgbot.InlineKeyboard
 	return msg, nil
 }
 
-func FormatStatusEvent(event *github.StatusEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatStatusEvent(event *github.StatusEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	state := event.GetState()
 	stateEmoji := map[string]string{
 		"success": "✅",
@@ -522,7 +522,7 @@ func FormatStatusEvent(event *github.StatusEvent) (string, *gotgbot.InlineKeyboa
 	return FormatMessageWithButton(msg, "View Commit", event.GetCommit().GetHTMLURL())
 }
 
-func FormatWorkflowRunEvent(e *github.WorkflowRunEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatWorkflowRunEvent(e *github.WorkflowRunEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	workflow := e.GetWorkflow().GetName()
 	run := e.GetWorkflowRun()
 	repo := e.GetRepo().GetFullName()
@@ -577,7 +577,7 @@ func FormatWorkflowRunEvent(e *github.WorkflowRunEvent) (string, *gotgbot.Inline
 	return FormatMessageWithButton(msg, "View Run", run.GetHTMLURL())
 }
 
-func FormatWorkflowJobEvent(e *github.WorkflowJobEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatWorkflowJobEvent(e *github.WorkflowJobEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	if e == nil {
 		return "⚙️ *No workflow job data*", nil
 	}
@@ -627,7 +627,7 @@ func FormatWorkflowJobEvent(e *github.WorkflowJobEvent) (string, *gotgbot.Inline
 	return FormatMessageWithButton(msg, "View Job", job.GetHTMLURL())
 }
 
-func FormatWorkflowDispatchEvent(e *github.WorkflowDispatchEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatWorkflowDispatchEvent(e *github.WorkflowDispatchEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	repo := e.GetRepo().GetFullName()
 	workflow := e.GetWorkflow()
 	if workflow == "" {
@@ -661,7 +661,7 @@ func FormatWorkflowDispatchEvent(e *github.WorkflowDispatchEvent) (string, *gotg
 	return FormatMessageWithButton(msg, "View Repository", e.GetRepo().GetHTMLURL())
 }
 
-func FormatTeamAddEvent(e *github.TeamAddEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatTeamAddEvent(e *github.TeamAddEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	msg := fmt.Sprintf(
 		"👥 *Team added*\n\n"+
 			"*Team:* %s\n"+
@@ -676,7 +676,7 @@ func FormatTeamAddEvent(e *github.TeamAddEvent) (string, *gotgbot.InlineKeyboard
 	return FormatMessageWithButton(msg, "View Team", e.GetTeam().GetHTMLURL())
 }
 
-func FormatTeamEvent(e *github.TeamEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatTeamEvent(e *github.TeamEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	action := e.GetAction()
 	team := e.GetTeam().GetName()
 	org := e.GetOrg().GetLogin()
@@ -712,7 +712,7 @@ func FormatTeamEvent(e *github.TeamEvent) (string, *gotgbot.InlineKeyboardMarkup
 	return FormatMessageWithButton(msg, "View Team", e.GetTeam().GetHTMLURL())
 }
 
-func FormatStarEvent(e *github.StarEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatStarEvent(e *github.StarEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	action := e.GetAction()
 	emoji := "⭐️"
 	actionText := "starred"
@@ -740,7 +740,7 @@ func FormatStarEvent(e *github.StarEvent) (string, *gotgbot.InlineKeyboardMarkup
 	return FormatMessageWithButton(msg, "View Repository", repoURL)
 }
 
-func FormatRepositoryDispatchEvent(e *github.RepositoryDispatchEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatRepositoryDispatchEvent(e *github.RepositoryDispatchEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	repo := e.GetRepo().GetFullName()
 	sender := e.GetSender().GetLogin()
 	action := e.GetAction()
@@ -783,7 +783,7 @@ func branchOrDefault(branch *string) string {
 	return "default branch"
 }
 
-func FormatPullRequestReviewCommentEvent(e *github.PullRequestReviewCommentEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatPullRequestReviewCommentEvent(e *github.PullRequestReviewCommentEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	action := e.GetAction()
 	repo := e.GetRepo().GetFullName()
 	comment := e.GetComment()
@@ -814,7 +814,7 @@ func FormatPullRequestReviewCommentEvent(e *github.PullRequestReviewCommentEvent
 	return FormatMessageWithButton(msg, "View Comment", comment.GetHTMLURL())
 }
 
-func FormatPullRequestReviewEvent(e *github.PullRequestReviewEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatPullRequestReviewEvent(e *github.PullRequestReviewEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	action := e.GetAction()
 	review := e.GetReview()
 	pr := e.GetPullRequest()
@@ -848,7 +848,7 @@ func FormatPullRequestReviewEvent(e *github.PullRequestReviewEvent) (string, *go
 	return FormatMessageWithButton(msg, "View Review", review.GetHTMLURL())
 }
 
-func FormatPingEvent(e *github.PingEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatPingEvent(e *github.PingEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	msg := "🏓 *Webhook Ping Received*\n\n"
 
 	if e.Zen != nil {
@@ -873,7 +873,7 @@ func FormatPingEvent(e *github.PingEvent) (string, *gotgbot.InlineKeyboardMarkup
 	return msg, nil
 }
 
-func FormatSponsorshipEvent(e *github.SponsorshipEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatSponsorshipEvent(e *github.SponsorshipEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	action := e.GetAction()
 	sender := e.GetSender()
 	sponsorship := e.GetChanges()
@@ -891,7 +891,7 @@ func FormatSponsorshipEvent(e *github.SponsorshipEvent) (string, *gotgbot.Inline
 	return FormatMessageWithButton(msg, "View Sponsorship", sender.GetHTMLURL())
 }
 
-func FormatUserEvent(e *github.UserEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatUserEvent(e *github.UserEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	action := e.GetAction()
 	user := e.GetUser()
 
@@ -905,7 +905,7 @@ func FormatUserEvent(e *github.UserEvent) (string, *gotgbot.InlineKeyboardMarkup
 	return FormatMessageWithButton(msg, "View User", user.GetHTMLURL())
 }
 
-func FormatRepositoryImportEvent(e *github.RepositoryImportEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatRepositoryImportEvent(e *github.RepositoryImportEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	status := e.GetStatus()
 	repo := e.GetRepo()
 	sender := e.GetSender()
@@ -922,7 +922,7 @@ func FormatRepositoryImportEvent(e *github.RepositoryImportEvent) (string, *gotg
 	return FormatMessageWithButton(msg, "View Repository", repo.GetHTMLURL())
 }
 
-func FormatRepositoryRulesetEvent(e *github.RepositoryRulesetEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatRepositoryRulesetEvent(e *github.RepositoryRulesetEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	action := e.GetAction()
 	repo := e.GetRepository()
 	sender := e.GetSender()
@@ -942,7 +942,7 @@ func FormatRepositoryRulesetEvent(e *github.RepositoryRulesetEvent) (string, *go
 	return FormatMessageWithButton(msg, "View Ruleset", fmt.Sprintf("%s/settings/rules/%d", repo.GetHTMLURL(), ruleset.GetID()))
 }
 
-func FormatSecretScanningAlertEvent(e *github.SecretScanningAlertEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatSecretScanningAlertEvent(e *github.SecretScanningAlertEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	action := e.GetAction()
 	alert := e.GetAlert()
 	repo := e.GetRepo()
@@ -962,7 +962,7 @@ func FormatSecretScanningAlertEvent(e *github.SecretScanningAlertEvent) (string,
 	return FormatMessageWithButton(msg, "View Alert", alert.GetHTMLURL())
 }
 
-func FormatSecretScanningAlertLocationEvent(e *github.SecretScanningAlertLocationEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatSecretScanningAlertLocationEvent(e *github.SecretScanningAlertLocationEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	action := e.GetAction()
 	repo := e.GetRepo()
 	sender := e.GetSender()
@@ -979,7 +979,7 @@ func FormatSecretScanningAlertLocationEvent(e *github.SecretScanningAlertLocatio
 	return FormatMessageWithButton(msg, "View Alert", e.GetAlert().GetHTMLURL())
 }
 
-func FormatSecurityAndAnalysisEvent(e *github.SecurityAndAnalysisEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatSecurityAndAnalysisEvent(e *github.SecurityAndAnalysisEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	repo := e.GetRepository()
 	sender := e.GetSender()
 	changes := e.Changes
@@ -1002,7 +1002,7 @@ func FormatSecurityAndAnalysisEvent(e *github.SecurityAndAnalysisEvent) (string,
 	return FormatMessageWithButton(msg, "View Security Settings", fmt.Sprintf("%s/settings/security_analysis", repo.GetHTMLURL()))
 }
 
-func FormatPullRequestReviewThreadEvent(e *github.PullRequestReviewThreadEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatPullRequestReviewThreadEvent(e *github.PullRequestReviewThreadEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	action := e.GetAction()
 	repo := e.GetRepo()
 	sender := e.GetSender()
@@ -1023,7 +1023,7 @@ func FormatPullRequestReviewThreadEvent(e *github.PullRequestReviewThreadEvent) 
 	return FormatMessageWithButton(msg, "View Thread", e.GetThread().Comments[0].GetHTMLURL())
 }
 
-func FormatPullRequestTargetEvent(e *github.PullRequestTargetEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatPullRequestTargetEvent(e *github.PullRequestTargetEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	action := e.GetAction()
 	repo := e.GetRepo()
 	sender := e.GetSender()
@@ -1044,7 +1044,7 @@ func FormatPullRequestTargetEvent(e *github.PullRequestTargetEvent) (string, *go
 	return FormatMessageWithButton(msg, "View PR", pr.GetHTMLURL())
 }
 
-func FormatRegistryPackageEvent(e *github.RegistryPackageEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatRegistryPackageEvent(e *github.RegistryPackageEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	action := e.GetAction()
 	repo := e.GetRepository()
 	sender := e.GetSender()
@@ -1064,7 +1064,7 @@ func FormatRegistryPackageEvent(e *github.RegistryPackageEvent) (string, *gotgbo
 	return FormatMessageWithButton(msg, "View Package", pkg.GetHTMLURL())
 }
 
-func FormatMergeGroupEvent(e *github.MergeGroupEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatMergeGroupEvent(e *github.MergeGroupEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	action := e.GetAction()
 	repo := e.GetRepo()
 	sender := e.GetSender()
@@ -1081,7 +1081,7 @@ func FormatMergeGroupEvent(e *github.MergeGroupEvent) (string, *gotgbot.InlineKe
 	return FormatMessageWithButton(msg, "View Repository", repo.GetHTMLURL())
 }
 
-func FormatPersonalAccessTokenRequestEvent(e *github.PersonalAccessTokenRequestEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatPersonalAccessTokenRequestEvent(e *github.PersonalAccessTokenRequestEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	action := e.GetAction()
 	org := e.GetOrg()
 	sender := e.GetSender()
@@ -1098,7 +1098,7 @@ func FormatPersonalAccessTokenRequestEvent(e *github.PersonalAccessTokenRequestE
 	return FormatMessageWithButton(msg, "View Organization Settings", fmt.Sprintf("https://github.com/organizations/%s/settings/personal-access-tokens", org.GetLogin()))
 }
 
-func FormatProjectV2Event(e *github.ProjectV2Event) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatProjectV2Event(e *github.ProjectV2Event) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	action := e.GetAction()
 	org := e.GetOrg()
 	sender := e.GetSender()
@@ -1118,7 +1118,7 @@ func FormatProjectV2Event(e *github.ProjectV2Event) (string, *gotgbot.InlineKeyb
 	return FormatMessageWithButton(msg, "View Project", project.GetHTMLURL())
 }
 
-func FormatProjectV2ItemEvent(e *github.ProjectV2ItemEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatProjectV2ItemEvent(e *github.ProjectV2ItemEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	action := e.GetAction()
 	org := e.GetOrg()
 	sender := e.GetSender()
@@ -1144,7 +1144,7 @@ func FormatProjectV2ItemEvent(e *github.ProjectV2ItemEvent) (string, *gotgbot.In
 	return FormatMessageWithButton(msg, "View Item", item.GetProjectURL())
 }
 
-func FormatGitHubAppAuthorizationEvent(e *github.GitHubAppAuthorizationEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatGitHubAppAuthorizationEvent(e *github.GitHubAppAuthorizationEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	action := e.GetAction()
 	sender := e.GetSender()
 
@@ -1158,7 +1158,7 @@ func FormatGitHubAppAuthorizationEvent(e *github.GitHubAppAuthorizationEvent) (s
 	return msg, nil
 }
 
-func FormatInstallationRepositoriesEvent(e *github.InstallationRepositoriesEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatInstallationRepositoriesEvent(e *github.InstallationRepositoriesEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	action := e.GetAction()
 	sender := e.GetSender()
 	reposAdded := e.RepositoriesAdded
@@ -1188,7 +1188,7 @@ func FormatInstallationRepositoriesEvent(e *github.InstallationRepositoriesEvent
 	return FormatMessageWithButton(msg, "View Installation", e.GetInstallation().GetHTMLURL())
 }
 
-func FormatInstallationTargetEvent(e *github.InstallationTargetEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatInstallationTargetEvent(e *github.InstallationTargetEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	action := e.GetAction()
 	sender := e.GetSender()
 	target := e.GetAccount()
@@ -1205,7 +1205,7 @@ func FormatInstallationTargetEvent(e *github.InstallationTargetEvent) (string, *
 	return FormatMessageWithButton(msg, "View Installation", e.GetInstallation().GetHTMLURL())
 }
 
-func FormatDiscussionCommentEvent(e *github.DiscussionCommentEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatDiscussionCommentEvent(e *github.DiscussionCommentEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	action := e.GetAction()
 	repo := e.GetRepo()
 	sender := e.GetSender()
@@ -1230,7 +1230,7 @@ func FormatDiscussionCommentEvent(e *github.DiscussionCommentEvent) (string, *go
 	return FormatMessageWithButton(msg, "View Comment", comment.GetHTMLURL())
 }
 
-func FormatDiscussionEvent(e *github.DiscussionEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatDiscussionEvent(e *github.DiscussionEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	action := e.GetAction()
 	repo := e.GetRepo()
 	sender := e.GetSender()
@@ -1250,7 +1250,7 @@ func FormatDiscussionEvent(e *github.DiscussionEvent) (string, *gotgbot.InlineKe
 	return FormatMessageWithButton(msg, "View Discussion", discussion.GetHTMLURL())
 }
 
-func FormatDependabotAlertEvent(e *github.DependabotAlertEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatDependabotAlertEvent(e *github.DependabotAlertEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	action := e.GetAction()
 	alert := e.GetAlert()
 	repo := e.GetRepo()
@@ -1272,7 +1272,7 @@ func FormatDependabotAlertEvent(e *github.DependabotAlertEvent) (string, *gotgbo
 	return FormatMessageWithButton(msg, "View Alert", alert.GetHTMLURL())
 }
 
-func FormatDeploymentProtectionRuleEvent(e *github.DeploymentProtectionRuleEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatDeploymentProtectionRuleEvent(e *github.DeploymentProtectionRuleEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	action := e.GetAction()
 	repo := e.GetRepo()
 	sender := e.GetSender()
@@ -1291,7 +1291,7 @@ func FormatDeploymentProtectionRuleEvent(e *github.DeploymentProtectionRuleEvent
 	return FormatMessageWithButton(msg, "View Deployment", e.GetDeployment().GetURL())
 }
 
-func FormatDeploymentReviewEvent(e *github.DeploymentReviewEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatDeploymentReviewEvent(e *github.DeploymentReviewEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	action := e.GetAction()
 	repo := e.GetRepo()
 	sender := e.GetSender()
@@ -1313,7 +1313,7 @@ func FormatDeploymentReviewEvent(e *github.DeploymentReviewEvent) (string, *gotg
 	return FormatMessageWithButton(msg, "View Workflow Run", e.GetWorkflowRun().GetHTMLURL())
 }
 
-func FormatContentReferenceEvent(e *github.ContentReferenceEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatContentReferenceEvent(e *github.ContentReferenceEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	action := e.GetAction()
 	repo := e.GetRepo()
 	sender := e.GetSender()
@@ -1333,7 +1333,7 @@ func FormatContentReferenceEvent(e *github.ContentReferenceEvent) (string, *gotg
 	return FormatMessageWithButton(msg, "View Repository", repo.GetHTMLURL())
 }
 
-func FormatCustomPropertyEvent(e *github.CustomPropertyEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatCustomPropertyEvent(e *github.CustomPropertyEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	action := e.GetAction()
 	org := e.GetOrg()
 	sender := e.GetSender()
@@ -1353,7 +1353,7 @@ func FormatCustomPropertyEvent(e *github.CustomPropertyEvent) (string, *gotgbot.
 	return FormatMessageWithButton(msg, "View Organization Settings", fmt.Sprintf("https://github.com/organizations/%s/settings/custom-properties", org.GetLogin()))
 }
 
-func FormatCustomPropertyValuesEvent(e *github.CustomPropertyValuesEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatCustomPropertyValuesEvent(e *github.CustomPropertyValuesEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	repo := e.GetRepo()
 	sender := e.GetSender()
 
@@ -1375,7 +1375,7 @@ func FormatCustomPropertyValuesEvent(e *github.CustomPropertyValuesEvent) (strin
 	return FormatMessageWithButton(msg, "View Repository Settings", fmt.Sprintf("%s/settings/custom-properties", repo.GetHTMLURL()))
 }
 
-func FormatBranchProtectionRuleEvent(e *github.BranchProtectionRuleEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatBranchProtectionRuleEvent(e *github.BranchProtectionRuleEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	action := e.GetAction()
 	repo := e.Repo
 	sender := e.GetSender()
@@ -1395,7 +1395,7 @@ func FormatBranchProtectionRuleEvent(e *github.BranchProtectionRuleEvent) (strin
 	return FormatMessageWithButton(msg, "View Branch Settings", fmt.Sprintf("%s/settings/branches", repo.GetHTMLURL()))
 }
 
-func FormatBranchProtectionConfigurationEvent(e *github.BranchProtectionConfigurationEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatBranchProtectionConfigurationEvent(e *github.BranchProtectionConfigurationEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	action := e.GetAction()
 	repo := e.Repo
 	sender := e.GetSender()
@@ -1412,7 +1412,7 @@ func FormatBranchProtectionConfigurationEvent(e *github.BranchProtectionConfigur
 	return FormatMessageWithButton(msg, "View Repository", repo.GetHTMLURL())
 }
 
-func FormatRepositoryVulnerabilityAlertEvent(e *github.RepositoryVulnerabilityAlertEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatRepositoryVulnerabilityAlertEvent(e *github.RepositoryVulnerabilityAlertEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	alert := e.GetAlert()
 	repo := e.Repository
 
@@ -1430,7 +1430,7 @@ func FormatRepositoryVulnerabilityAlertEvent(e *github.RepositoryVulnerabilityAl
 	return FormatMessageWithButton(msg, "View Alert", fmt.Sprintf("%s/security/advisories/%s", repo.GetHTMLURL(), alert.GetGitHubSecurityAdvisoryID()))
 }
 
-func FormatPageBuildEvent(e *github.PageBuildEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatPageBuildEvent(e *github.PageBuildEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	msg := "🏗️ *GitHub Pages Build*\n\n"
 
 	if e.Build != nil {
@@ -1459,7 +1459,7 @@ func FormatPageBuildEvent(e *github.PageBuildEvent) (string, *gotgbot.InlineKeyb
 	return FormatMessageWithButton(msg, "View Repository", e.GetRepo().GetHTMLURL())
 }
 
-func FormatPackageEvent(e *github.PackageEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatPackageEvent(e *github.PackageEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	msg := "📦 *Package Event*\n\n"
 
 	if e.Package != nil && e.Package.Name != nil {
@@ -1480,7 +1480,7 @@ func FormatPackageEvent(e *github.PackageEvent) (string, *gotgbot.InlineKeyboard
 	return FormatMessageWithButton(msg, "View Package", e.GetPackage().GetHTMLURL())
 }
 
-func FormatOrgBlockEvent(e *github.OrgBlockEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatOrgBlockEvent(e *github.OrgBlockEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	msg := "🚫 *Organization Block*\n\n"
 	if user := e.GetBlockedUser(); user != nil {
 		msg += fmt.Sprintf("*Blocked:* %s\n", FormatUser(user.GetLogin()))
@@ -1493,7 +1493,7 @@ func FormatOrgBlockEvent(e *github.OrgBlockEvent) (string, *gotgbot.InlineKeyboa
 	return FormatMessageWithButton(msg, "View Organization", e.GetOrganization().GetHTMLURL())
 }
 
-func FormatOrganizationEvent(e *github.OrganizationEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatOrganizationEvent(e *github.OrganizationEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	action := e.GetAction()
 	sender := e.GetSender()
 
@@ -1506,7 +1506,7 @@ func FormatOrganizationEvent(e *github.OrganizationEvent) (string, *gotgbot.Inli
 	return FormatMessageWithButton(msg, "View Organization", e.GetOrganization().GetHTMLURL())
 }
 
-func FormatMilestoneEvent(e *github.MilestoneEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatMilestoneEvent(e *github.MilestoneEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	milestone := e.GetMilestone()
 	action := e.GetAction()
 
@@ -1526,7 +1526,7 @@ func FormatMilestoneEvent(e *github.MilestoneEvent) (string, *gotgbot.InlineKeyb
 	return FormatMessageWithButton(msg, "View Milestone", e.GetMilestone().GetHTMLURL())
 }
 
-func FormatMetaEvent(e *github.MetaEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatMetaEvent(e *github.MetaEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	msg := "⚙️ *Meta Event*\n\n"
 
 	if id := e.GetHookID(); id != 0 {
@@ -1552,7 +1552,7 @@ func FormatMetaEvent(e *github.MetaEvent) (string, *gotgbot.InlineKeyboardMarkup
 	return msg, nil
 }
 
-func FormatMembershipEvent(e *github.MembershipEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatMembershipEvent(e *github.MembershipEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	if e == nil {
 		return "🚫 *No membership event data*", nil
 	}
@@ -1581,7 +1581,7 @@ func FormatMembershipEvent(e *github.MembershipEvent) (string, *gotgbot.InlineKe
 	return FormatMessageWithButton(msg, "View Team", e.GetTeam().GetHTMLURL())
 }
 
-func FormatDeploymentEvent(e *github.DeploymentEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatDeploymentEvent(e *github.DeploymentEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	msg := "🚀 *Deployment Event*\n\n"
 
 	if deploy := e.GetDeployment(); deploy != nil {
@@ -1602,7 +1602,7 @@ func FormatDeploymentEvent(e *github.DeploymentEvent) (string, *gotgbot.InlineKe
 	return FormatMessageWithButton(msg, "View Deployment", e.GetDeployment().GetURL())
 }
 
-func FormatLabelEvent(e *github.LabelEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatLabelEvent(e *github.LabelEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	if e == nil {
 		return "🏷️ *No label event data*", nil
 	}
@@ -1629,7 +1629,7 @@ func FormatLabelEvent(e *github.LabelEvent) (string, *gotgbot.InlineKeyboardMark
 	return FormatMessageWithButton(msg, "View Repository", e.GetRepo().GetHTMLURL())
 }
 
-func FormatMarketplacePurchaseEvent(e *github.MarketplacePurchaseEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatMarketplacePurchaseEvent(e *github.MarketplacePurchaseEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	if e == nil {
 		return "🛒 *No marketplace data*", nil
 	}
@@ -1660,7 +1660,7 @@ func FormatMarketplacePurchaseEvent(e *github.MarketplacePurchaseEvent) (string,
 	return msg, nil
 }
 
-func FormatGollumEvent(e *github.GollumEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatGollumEvent(e *github.GollumEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	if e == nil {
 		return "📚 *No wiki update data available*", nil
 	}
@@ -1735,7 +1735,7 @@ func getActionEmoji(action string) string {
 	}
 }
 
-func FormatDeployKeyEvent(e *github.DeployKeyEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatDeployKeyEvent(e *github.DeployKeyEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	if e == nil {
 		return "🔑 *No deploy key data*", nil
 	}
@@ -1758,7 +1758,7 @@ func FormatDeployKeyEvent(e *github.DeployKeyEvent) (string, *gotgbot.InlineKeyb
 	return FormatMessageWithButton(msg, "View Repository", e.GetRepo().GetHTMLURL())
 }
 
-func FormatCheckSuiteEvent(e *github.CheckSuiteEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatCheckSuiteEvent(e *github.CheckSuiteEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	if e == nil {
 		return "✅ *No check suite data*", nil
 	}
@@ -1788,7 +1788,7 @@ func FormatCheckSuiteEvent(e *github.CheckSuiteEvent) (string, *gotgbot.InlineKe
 	return FormatMessageWithButton(msg.String(), "View Details", e.GetCheckSuite().GetURL())
 }
 
-func FormatCheckRunEvent(e *github.CheckRunEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatCheckRunEvent(e *github.CheckRunEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	if e == nil {
 		return "⚙️ *No check run data*", nil
 	}
@@ -1828,7 +1828,7 @@ func FormatCheckRunEvent(e *github.CheckRunEvent) (string, *gotgbot.InlineKeyboa
 	return FormatMessageWithButton(msg.String(), "View Details", e.GetCheckRun().GetHTMLURL())
 }
 
-func FormatDeploymentStatusEvent(e *github.DeploymentStatusEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatDeploymentStatusEvent(e *github.DeploymentStatusEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	if e == nil {
 		return "🚦 *No deployment status data*", nil
 	}
@@ -1849,7 +1849,7 @@ func FormatDeploymentStatusEvent(e *github.DeploymentStatusEvent) (string, *gotg
 	return FormatMessageWithButton(msg, "View Deployment", e.GetDeploymentStatus().GetDeploymentURL())
 }
 
-func FormatSecurityAdvisoryEvent(e *github.SecurityAdvisoryEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatSecurityAdvisoryEvent(e *github.SecurityAdvisoryEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	if e == nil {
 		return "⚠️ *No security advisory data*", nil
 	}
@@ -1888,7 +1888,7 @@ func FormatSecurityAdvisoryEvent(e *github.SecurityAdvisoryEvent) (string, *gotg
 	return FormatMessageWithButton(msg, "View Advisory", e.GetSecurityAdvisory().GetHTMLURL())
 }
 
-func FormatInstallationEvent(e *github.InstallationEvent) (string, *gotgbot.InlineKeyboardMarkup) {
+func FormatInstallationEvent(e *github.InstallationEvent) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
 	action := e.GetAction()
 	sender := e.GetSender().GetLogin()
 
