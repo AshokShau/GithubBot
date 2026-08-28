@@ -141,6 +141,12 @@ func (h *CommandHandler) AddRepo(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
+	if existingLink, _ := h.DB.GetRepoLink(context.Background(), m.ChatId, repoFullName); existingLink != nil {
+		msg := fmt.Sprintf("Repository <b>%s</b> is already linked to this chat.", html.EscapeString(repoFullName))
+		_, err = m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+		return err
+	}
+
 	_, _, getErr := client.Repositories.Get(context.Background(), owner, repo)
 	if getErr != nil {
 		if h.handleAuthError(c, m, getErr) {

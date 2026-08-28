@@ -520,6 +520,14 @@ func (h *CallbackHandler) handleAddRepoByID(c *gotdbot.Client, u *gotdbot.Update
 		return nil
 	}
 
+	if existingLink, _ := h.DB.GetRepoLink(context.Background(), u.ChatId, repo.GetFullName()); existingLink != nil {
+		_ = u.Answer(c, 0, true, fmt.Sprintf("Repository %s is already linked to this chat.", repo.GetFullName()), "")
+		_, err = u.EditMessageText(c, fmt.Sprintf("Repository <b>%s</b> is already linked to this chat.", repo.GetFullName()), &gotdbot.EditTextMessageOpts{
+			ParseMode: gotdbot.ParseModeHTML,
+		})
+		return err
+	}
+
 	chatToken, encErr := utils.Encrypt(fmt.Sprintf("%d", u.ChatId), h.EncryptionKey)
 	if encErr != nil {
 		_ = u.Answer(c, 0, true, "Error generating webhook token.", "")
