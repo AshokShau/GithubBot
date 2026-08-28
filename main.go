@@ -182,7 +182,7 @@ func main() {
 		_, _ = writer.Write([]byte(html))
 	})
 
-	webhookHandler := github.NewWebhookServer(cfg, database, bot, contextCache, actionCache).Handler
+	webhookHandler := github.NewWebhookServer(cfg, database, bot, clientFactory, contextCache, actionCache, adminCache).Handler
 	http.HandleFunc("/webhook/", webhookHandler)
 	http.HandleFunc("/oauth/callback", func(w http.ResponseWriter, r *http.Request) {
 		code := r.URL.Query().Get("code")

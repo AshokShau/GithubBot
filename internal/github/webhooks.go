@@ -2,8 +2,8 @@ package github
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -21,20 +21,24 @@ import (
 )
 
 type WebhookServer struct {
-	Config       *config.Config
-	DB           *db.DB
-	Bot          *gotdbot.Client
-	ContextCache *cache.Cache[string, models.MessageContext]  // Key: "chat_id:message_id"
-	ActionCache  *cache.Cache[string, models.PRActionContext] // Key: UUID
+	Config        *config.Config
+	DB            *db.DB
+	Bot           *gotdbot.Client
+	ClientFactory *ClientFactory
+	ContextCache  *cache.Cache[string, models.MessageContext]  // Key: "chat_id:message_id"
+	ActionCache   *cache.Cache[string, models.PRActionContext] // Key: UUID
+	AdminCache    *cache.Cache[int64, []int64]
 }
 
-func NewWebhookServer(cfg *config.Config, database *db.DB, bot *gotdbot.Client, ctxCache *cache.Cache[string, models.MessageContext], actionCache *cache.Cache[string, models.PRActionContext]) *WebhookServer {
+func NewWebhookServer(cfg *config.Config, database *db.DB, bot *gotdbot.Client, factory *ClientFactory, ctxCache *cache.Cache[string, models.MessageContext], actionCache *cache.Cache[string, models.PRActionContext], adminCache *cache.Cache[int64, []int64]) *WebhookServer {
 	return &WebhookServer{
-		Config:       cfg,
-		DB:           database,
-		Bot:          bot,
-		ContextCache: ctxCache,
-		ActionCache:  actionCache,
+		Config:        cfg,
+		DB:            database,
+		Bot:           bot,
+		ClientFactory: factory,
+		ContextCache:  ctxCache,
+		ActionCache:   actionCache,
+		AdminCache:    adminCache,
 	}
 }
 
@@ -59,41 +63,149 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 				chatID, _ = strconv.ParseInt(decrypted, 10, 64)
 			}
 		} else {
-			log.Printf("Failed to decrypt webhook token: %v", err)
+			s.Bot.Logger.Warnf("Failed to decrypt webhook token: %v", err)
 		}
 	}
 
 	if chatID == 0 {
-		log.Printf("Error: Valid webhook token required.")
+		s.Bot.Logger.Warnf("Error: Valid webhook token required.")
 		http.Error(w, "Unauthorized: Token required", http.StatusUnauthorized)
 		return
 	}
 
 	if s.Config.GitHubWebhookSecret == "" {
-		log.Printf("Warning: GITHUB_WEBHOOK_SECRET is not set in bot configuration")
-	}
-
-	payload, err := github.ValidatePayload(r, []byte(s.Config.GitHubWebhookSecret))
-	if err != nil {
-		log.Printf("Error: Webhook signature validation failed for chat %d (topic %d). Ensure GITHUB_WEBHOOK_SECRET matches. Error: %v", chatID, topicID, err)
-		http.Error(w, "Webhook signature validation failed. The secret configured in your GitHub repository webhook settings does not match the GITHUB_WEBHOOK_SECRET configured on the bot server.", http.StatusUnauthorized)
-		return
-	}
-
-	event, err := github.ParseWebHook(github.WebHookType(r), payload)
-	if err != nil {
-		log.Printf("Error: Webhook parsing failed: %v", err)
-		http.Error(w, "Parse error", http.StatusInternalServerError)
-		return
+		s.Bot.Logger.Warnf("Warning: GITHUB_WEBHOOK_SECRET is not set in bot configuration")
 	}
 
 	var hookID int64
 	if idStr := r.Header.Get("X-GitHub-Hook-ID"); idStr != "" {
 		hookID, _ = strconv.ParseInt(idStr, 10, 64)
 	}
+	eventType := r.Header.Get("X-GitHub-Event")
+	deliveryID := r.Header.Get("X-GitHub-Delivery")
+
+	payload, err := github.ValidatePayload(r, []byte(s.Config.GitHubWebhookSecret))
+	if err != nil {
+		repoFullName := extractRepoFullName(payload)
+		s.Bot.Logger.Infof("Error: Webhook signature validation failed for chat %d (topic %d, hookID %d, repo %q, event %s, delivery %s). Ensure GITHUB_WEBHOOK_SECRET matches. Error: %v",
+			chatID, topicID, hookID, repoFullName, eventType, deliveryID, err)
+
+		go s.cleanupInvalidWebhook(chatID, hookID, repoFullName)
+
+		http.Error(w, "Webhook signature validation failed. The secret configured in your GitHub repository webhook settings does not match the GITHUB_WEBHOOK_SECRET configured on the bot server.", http.StatusUnauthorized)
+		return
+	}
+
+	event, err := github.ParseWebHook(github.WebHookType(r), payload)
+	if err != nil {
+		s.Bot.Logger.Warnf("Error: Webhook parsing failed: %v", err)
+		http.Error(w, "Parse error", http.StatusInternalServerError)
+		return
+	}
 
 	go s.processEvent(event, chatID, topicID, hookID)
 	w.WriteHeader(http.StatusOK)
+}
+
+func extractRepoFullName(payload []byte) string {
+	if len(payload) == 0 {
+		return ""
+	}
+	var raw struct {
+		Repository struct {
+			FullName string `json:"full_name"`
+		} `json:"repository"`
+	}
+	if err := json.Unmarshal(payload, &raw); err == nil && raw.Repository.FullName != "" {
+		return raw.Repository.FullName
+	}
+	return ""
+}
+
+func (s *WebhookServer) cleanupInvalidWebhook(chatID int64, hookID int64, payloadRepo string) {
+	if s.DB == nil || s.Bot == nil || s.ClientFactory == nil {
+		return
+	}
+
+	ctx := context.Background()
+
+	links, err := s.DB.GetChatLinks(ctx, chatID)
+	if err != nil || len(links) == 0 {
+		return
+	}
+
+	var targetLinks []models.RepoLink
+	for _, l := range links {
+		if (hookID != 0 && l.WebhookID == hookID) || (payloadRepo != "" && strings.EqualFold(l.RepoFullName, payloadRepo)) {
+			targetLinks = append(targetLinks, l)
+		}
+	}
+
+	if len(targetLinks) == 0 {
+		s.Bot.Logger.Infof("Webhook cleanup: No matching repo link found in DB for chat %d (hookID: %d, repo: %q)", chatID, hookID, payloadRepo)
+		return
+	}
+
+	var client *github.Client
+	var targetUserIDs []int64
+
+	if s.AdminCache != nil {
+		if cachedAdmins, ok := s.AdminCache.Get(chatID); ok {
+			targetUserIDs = append(targetUserIDs, cachedAdmins...)
+		}
+	}
+
+	if len(targetUserIDs) == 0 {
+		admins, aErr := s.Bot.GetChatAdministrators(chatID)
+		if aErr == nil && admins != nil {
+			for _, admin := range admins.Administrators {
+				targetUserIDs = append(targetUserIDs, admin.UserId)
+			}
+			if s.AdminCache != nil {
+				s.AdminCache.Set(chatID, targetUserIDs, 1*time.Hour)
+			}
+		}
+	}
+	targetUserIDs = append(targetUserIDs, chatID)
+
+	for _, uid := range targetUserIDs {
+		user, uErr := s.DB.GetUserByTelegramID(ctx, uid)
+		if uErr == nil && user != nil && user.EncryptedOAuthToken != "" {
+			token, decErr := utils.Decrypt(user.EncryptedOAuthToken, s.Config.EncryptionKey)
+			if decErr == nil && token != "" {
+				if ghClient, cErr := s.ClientFactory.GetUserClient(ctx, token); cErr == nil {
+					client = ghClient
+					break
+				}
+			}
+		}
+	}
+
+	if client == nil {
+		s.Bot.Logger.Infof("Webhook cleanup: No authorized GitHub client found for chat %d to delete webhook", chatID)
+		return
+	}
+
+	for _, link := range targetLinks {
+		repoName := link.RepoFullName
+		parts := strings.Split(repoName, "/")
+		if len(parts) == 2 {
+			owner, repo := parts[0], parts[1]
+			hid := link.WebhookID
+			if hid == 0 {
+				hid = hookID
+			}
+			if hid != 0 {
+				s.Bot.Logger.Infof("Attempting to delete invalid webhook ID %d for %s on GitHub...", hid, repoName)
+				_, dErr := client.Repositories.DeleteHook(ctx, owner, repo, hid)
+				if dErr != nil {
+					s.Bot.Logger.Warnf("Webhook deletion via GitHub API failed for %s (hookID %d): %v", repoName, hid, dErr)
+				} else {
+					s.Bot.Logger.Infof("Successfully deleted invalid webhook ID %d for %s on GitHub", hid, repoName)
+				}
+			}
+		}
+	}
 }
 
 func (s *WebhookServer) processEvent(event any, chatID int64, topicID int32, hookID int64) {
@@ -102,9 +214,9 @@ func (s *WebhookServer) processEvent(event any, chatID int64, topicID int32, hoo
 		if newFullName != "" && hookID != 0 {
 			err := s.DB.UpdateRepoLinkName(context.Background(), chatID, hookID, newFullName)
 			if err != nil {
-				log.Printf("Failed to update repo name for chat %d: %v", chatID, err)
+				s.Bot.Logger.Warnf("Failed to update repo name for chat %d: %v", chatID, err)
 			} else {
-				log.Printf("Updated repo name to %s for chat %d", newFullName, chatID)
+				s.Bot.Logger.Infof("Updated repo name to %s for chat %d", newFullName, chatID)
 			}
 		}
 	}
@@ -131,7 +243,7 @@ func (s *WebhookServer) processEvent(event any, chatID int64, topicID int32, hoo
 
 	sentMsg, err := s.Bot.SendTextMessage(chatID, msg, opts)
 	if err != nil {
-		log.Printf("Error sending message to chat %d: %v", chatID, err)
+		s.Bot.Logger.Warnf("Error sending message to chat %d: %v", chatID, err)
 		return
 	}
 
