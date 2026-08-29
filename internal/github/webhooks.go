@@ -1,10 +1,14 @@
 package github
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"mime"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -84,9 +88,12 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 	eventType := r.Header.Get("X-GitHub-Event")
 	deliveryID := r.Header.Get("X-GitHub-Delivery")
 
+	bodyBytes, _ := io.ReadAll(r.Body)
+	r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+
 	payload, err := github.ValidatePayload(r, []byte(s.Config.GitHubWebhookSecret))
 	if err != nil {
-		repoFullName := extractRepoFullName(payload)
+		repoFullName := extractRepoFullNameFromBody(r, bodyBytes)
 		s.Bot.Logger.Infof("Error: Webhook signature validation failed for chat %d (topic %d, hookID %d, repo %q, event %s, delivery %s). Ensure GITHUB_WEBHOOK_SECRET matches. Error: %v",
 			chatID, topicID, hookID, repoFullName, eventType, deliveryID, err)
 
@@ -105,6 +112,22 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 
 	go s.processEvent(event, chatID, topicID, hookID)
 	w.WriteHeader(http.StatusOK)
+}
+
+func extractRepoFullNameFromBody(r *http.Request, body []byte) string {
+	if len(body) == 0 {
+		return ""
+	}
+	contentType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	var payload []byte
+	if contentType == "application/x-www-form-urlencoded" {
+		if form, err := url.ParseQuery(string(body)); err == nil {
+			payload = []byte(form.Get("payload"))
+		}
+	} else {
+		payload = body
+	}
+	return extractRepoFullName(payload)
 }
 
 func extractRepoFullName(payload []byte) string {
