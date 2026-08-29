@@ -42,7 +42,7 @@ func main() {
 
 	bot, err := gotdbot.NewClient(6, "eb06d4abfb49dc3eeb1aeb98ae0f581e", cfg.TelegramToken, &gotdbot.ClientOpts{
 		LibraryPath: "./libtdjson.so.1.8.67",
-		AutoRetry:   &gotdbot.AutoRetry{MaxFloodWait: 8 * time.Minute, ChatNotFound: true},
+		AutoRetry:   &gotdbot.AutoRetry{MaxFloodWait: 10 * time.Second, ChatNotFound: true},
 	})
 
 	if err != nil {
