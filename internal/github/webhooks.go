@@ -21,7 +21,7 @@ import (
 	"github-webhook/internal/utils"
 
 	"github.com/AshokShau/gotdbot"
-	"github.com/google/go-github/v90/github"
+	"github.com/google/go-github/v91/github"
 )
 
 type WebhookServer struct {

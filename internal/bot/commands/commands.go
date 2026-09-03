@@ -21,7 +21,7 @@ import (
 
 	"github.com/AshokShau/gotdbot"
 
-	"github.com/google/go-github/v90/github"
+	"github.com/google/go-github/v91/github"
 )
 
 func getTopicID(m *gotdbot.Message) int32 {
@@ -1384,7 +1384,7 @@ func (h *CommandHandler) Comment(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	comment, _, err := client.Issues.CreateComment(context.Background(), owner, repo, num, &github.IssueComment{Body: &body})
+	comment, _, err := client.Issues.CreateComment(context.Background(), owner, repo, num, github.IssueCommentRequest{Body: body})
 	if err != nil {
 		if h.handleAuthError(c, m, err) {
 			return nil
