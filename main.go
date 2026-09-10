@@ -42,7 +42,7 @@ func main() {
 
 	bot, err := gotdbot.NewClient(6, "eb06d4abfb49dc3eeb1aeb98ae0f581e", cfg.TelegramToken, &gotdbot.ClientOpts{
 		LibraryPath: "./libtdjson.so.1.8.67",
-		AutoRetry:   &gotdbot.AutoRetry{MaxFloodWait: 5 * time.Minute, ChatNotFound: true},
+		AutoRetry:   &gotdbot.AutoRetry{MaxFloodWait: 10 * time.Second, ChatNotFound: true},
 	})
 
 	if err != nil {
@@ -182,7 +182,7 @@ func main() {
 		_, _ = writer.Write([]byte(html))
 	})
 
-	webhookHandler := github.NewWebhookServer(cfg, database, bot, contextCache, actionCache).Handler
+	webhookHandler := github.NewWebhookServer(cfg, database, bot, clientFactory, contextCache, actionCache, adminCache).Handler
 	http.HandleFunc("/webhook/", webhookHandler)
 	http.HandleFunc("/oauth/callback", func(w http.ResponseWriter, r *http.Request) {
 		code := r.URL.Query().Get("code")

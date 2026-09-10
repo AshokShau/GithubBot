@@ -17,7 +17,7 @@ import (
 	"net/http"
 
 	"github.com/AshokShau/gotdbot"
-	gh "github.com/google/go-github/v90/github"
+	gh "github.com/google/go-github/v91/github"
 )
 
 type CallbackHandler struct {
@@ -518,6 +518,14 @@ func (h *CallbackHandler) handleAddRepoByID(c *gotdbot.Client, u *gotdbot.Update
 		}
 		_ = u.Answer(c, 0, true, "Repo not found or access denied.", "")
 		return nil
+	}
+
+	if existingLink, _ := h.DB.GetRepoLink(context.Background(), u.ChatId, repo.GetFullName()); existingLink != nil {
+		_ = u.Answer(c, 0, true, fmt.Sprintf("Repository %s is already linked to this chat.", repo.GetFullName()), "")
+		_, err = u.EditMessageText(c, fmt.Sprintf("Repository <b>%s</b> is already linked to this chat.", repo.GetFullName()), &gotdbot.EditTextMessageOpts{
+			ParseMode: gotdbot.ParseModeHTML,
+		})
+		return err
 	}
 
 	chatToken, encErr := utils.Encrypt(fmt.Sprintf("%d", u.ChatId), h.EncryptionKey)

@@ -11,7 +11,7 @@ import (
 	"github-webhook/internal/utils"
 
 	"github.com/AshokShau/gotdbot"
-	gh "github.com/google/go-github/v90/github"
+	gh "github.com/google/go-github/v91/github"
 )
 
 type ReplyHandler struct {
@@ -62,13 +62,13 @@ func (h *ReplyHandler) HandleReply(c *gotdbot.Client, msg *gotdbot.Message) erro
 	}
 
 	if mContext.Type == "pr_review_comment" && mContext.CommentID != 0 {
-		comment := &gh.PullRequestComment{
-			Body:      &commentBody,
+		comment := gh.CreatePullRequestCommentRequest{
+			Body:      commentBody,
 			InReplyTo: &mContext.CommentID,
 		}
 		_, _, err = client.PullRequests.CreateComment(context.Background(), mContext.Owner, mContext.Repo, mContext.IssueNumber, comment)
 	} else {
-		comment := &gh.IssueComment{Body: &commentBody}
+		comment := gh.IssueCommentRequest{Body: commentBody}
 		_, _, err = client.Issues.CreateComment(context.Background(), mContext.Owner, mContext.Repo, mContext.IssueNumber, comment)
 	}
 

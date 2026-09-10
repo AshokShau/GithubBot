@@ -21,7 +21,7 @@ import (
 
 	"github.com/AshokShau/gotdbot"
 
-	"github.com/google/go-github/v90/github"
+	"github.com/google/go-github/v91/github"
 )
 
 func getTopicID(m *gotdbot.Message) int32 {
@@ -139,6 +139,12 @@ func (h *CommandHandler) AddRepo(c *gotdbot.Client, m *gotdbot.Message) error {
 	if owner == "" || repo == "" {
 		_, _ = m.ReplyText(c, "Invalid repository format. Use owner/repo", nil)
 		return nil
+	}
+
+	if existingLink, _ := h.DB.GetRepoLink(context.Background(), m.ChatId, repoFullName); existingLink != nil {
+		msg := fmt.Sprintf("Repository <b>%s</b> is already linked to this chat.", html.EscapeString(repoFullName))
+		_, err = m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+		return err
 	}
 
 	_, _, getErr := client.Repositories.Get(context.Background(), owner, repo)
@@ -1378,7 +1384,7 @@ func (h *CommandHandler) Comment(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	comment, _, err := client.Issues.CreateComment(context.Background(), owner, repo, num, &github.IssueComment{Body: &body})
+	comment, _, err := client.Issues.CreateComment(context.Background(), owner, repo, num, github.IssueCommentRequest{Body: body})
 	if err != nil {
 		if h.handleAuthError(c, m, err) {
 			return nil
