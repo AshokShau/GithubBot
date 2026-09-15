@@ -438,9 +438,9 @@ func (h *CallbackHandler) handleRepoPage(c *gotdbot.Client, u *gotdbot.UpdateNew
 		return nil
 	}
 	opts := &gh.RepositoryListOptions{
-		Sort:        "updated",
-		Direction:   "desc",
-		ListOptions: gh.ListOptions{PerPage: 5, Page: page},
+		Sort:      "updated",
+		Direction: "desc",
+		PerPage:   5, Page: page,
 	}
 
 	repos, resp, err := ghClient.Repositories.List(context.Background(), "", opts)

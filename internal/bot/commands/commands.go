@@ -249,9 +249,9 @@ func (h *CommandHandler) sendRepoList(c *gotdbot.Client, m *gotdbot.Message, pag
 	}
 
 	opts := &github.RepositoryListOptions{
-		Sort:        "updated",
-		Direction:   "desc",
-		ListOptions: github.ListOptions{PerPage: 5, Page: page},
+		Sort:      "updated",
+		Direction: "desc",
+		PerPage:   5, Page: page,
 	}
 
 	repos, resp, err := client.Repositories.List(context.Background(), "", opts)
@@ -856,8 +856,8 @@ func (h *CommandHandler) Repo(c *gotdbot.Client, m *gotdbot.Message) error {
 	}
 
 	prs, resp, err := client.PullRequests.List(context.Background(), owner, repo, &github.PullRequestListOptions{
-		State:       "open",
-		ListOptions: github.ListOptions{PerPage: 1},
+		State:   "open",
+		PerPage: 1,
 	})
 	var openPRs int
 	if err == nil {
@@ -1112,7 +1112,7 @@ func (h *CommandHandler) Contributors(c *gotdbot.Client, m *gotdbot.Message) err
 	}
 
 	contribs, _, err := client.Repositories.ListContributors(context.Background(), owner, repo, &github.ListContributorsOptions{
-		ListOptions: github.ListOptions{PerPage: 10},
+		PerPage: 10,
 	})
 	if err != nil {
 		if h.handleAuthError(c, m, err) {
@@ -1186,7 +1186,7 @@ func (h *CommandHandler) Branches(c *gotdbot.Client, m *gotdbot.Message) error {
 	}
 
 	branches, _, err := client.Repositories.ListBranches(context.Background(), owner, repo, &github.BranchListOptions{
-		ListOptions: github.ListOptions{PerPage: 20},
+		PerPage: 20,
 	})
 	if err != nil {
 		if h.handleAuthError(c, m, err) {
@@ -2322,7 +2322,7 @@ func (h *CommandHandler) Commits(c *gotdbot.Client, m *gotdbot.Message) error {
 	}
 
 	commits, _, err := client.Repositories.ListCommits(context.Background(), owner, repo, &github.CommitsListOptions{
-		ListOptions: github.ListOptions{PerPage: 10},
+		PerPage: 10,
 	})
 	if err != nil {
 		if h.handleAuthError(c, m, err) {
@@ -2408,7 +2408,7 @@ func (h *CommandHandler) Actions(c *gotdbot.Client, m *gotdbot.Message) error {
 	}
 
 	runs, _, err := client.Actions.ListRepositoryWorkflowRuns(context.Background(), owner, repo, &github.ListWorkflowRunsOptions{
-		ListOptions: github.ListOptions{PerPage: 10},
+		PerPage: 10,
 	})
 	if err != nil {
 		if h.handleAuthError(c, m, err) {
@@ -3014,7 +3014,7 @@ func (h *CommandHandler) Find(c *gotdbot.Client, m *gotdbot.Message) error {
 
 	query := fmt.Sprintf("%s repo:%s/%s is:issue", keyword, owner, repo)
 	result, _, err := client.Search.Issues(context.Background(), query, &github.SearchOptions{
-		ListOptions: github.ListOptions{PerPage: 5},
+		PerPage: 5,
 	})
 	if err != nil {
 		if h.handleAuthError(c, m, err) {
@@ -3059,7 +3059,7 @@ func (h *CommandHandler) PRSearch(c *gotdbot.Client, m *gotdbot.Message) error {
 
 	query := fmt.Sprintf("%s repo:%s/%s is:pr", keyword, owner, repo)
 	result, _, err := client.Search.Issues(context.Background(), query, &github.SearchOptions{
-		ListOptions: github.ListOptions{PerPage: 5},
+		PerPage: 5,
 	})
 	if err != nil {
 		if h.handleAuthError(c, m, err) {
@@ -3104,7 +3104,7 @@ func (h *CommandHandler) SearchCode(c *gotdbot.Client, m *gotdbot.Message) error
 
 	query := fmt.Sprintf("%s repo:%s/%s", keyword, owner, repo)
 	result, _, err := client.Search.Code(context.Background(), query, &github.SearchOptions{
-		ListOptions: github.ListOptions{PerPage: 5},
+		PerPage: 5,
 	})
 	if err != nil {
 		if h.handleAuthError(c, m, err) {
@@ -3245,8 +3245,8 @@ func (h *CommandHandler) Stats(c *gotdbot.Client, m *gotdbot.Message) error {
 	}
 
 	prs, prResp, err := client.PullRequests.List(context.Background(), owner, repo, &github.PullRequestListOptions{
-		State:       "open",
-		ListOptions: github.ListOptions{PerPage: 1},
+		State:   "open",
+		PerPage: 1,
 	})
 	var openPRs int
 	if err == nil {
@@ -3260,7 +3260,7 @@ func (h *CommandHandler) Stats(c *gotdbot.Client, m *gotdbot.Message) error {
 	openIssues := max(repoInfo.GetOpenIssuesCount()-openPRs, 0)
 
 	contribs, _, _ := client.Repositories.ListContributors(context.Background(), owner, repo, &github.ListContributorsOptions{
-		ListOptions: github.ListOptions{PerPage: 100},
+		PerPage: 100,
 	})
 	contribsCount := len(contribs)
 
@@ -3272,7 +3272,7 @@ func (h *CommandHandler) Stats(c *gotdbot.Client, m *gotdbot.Message) error {
 
 	lastCommit := "N/A"
 	commits, _, commitErr := client.Repositories.ListCommits(context.Background(), owner, repo, &github.CommitsListOptions{
-		ListOptions: github.ListOptions{PerPage: 1},
+		PerPage: 1,
 	})
 	if commitErr == nil && len(commits) > 0 {
 		lastCommit = fmt.Sprintf("%s (by %s)", commits[0].GetSHA()[:7], commits[0].GetCommit().GetAuthor().GetName())
