@@ -11,7 +11,7 @@ import (
 	"github-webhook/internal/utils"
 
 	"github.com/AshokShau/gotdbot"
-	gh "github.com/google/go-github/v91/github"
+	gh "github.com/google/go-github/v92/github"
 )
 
 type ReplyHandler struct {
