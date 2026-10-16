@@ -5,8 +5,8 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -21,13 +21,16 @@ import (
 	"github-webhook/internal/utils"
 
 	"github.com/AshokShau/gotdbot"
+	"github.com/AshokShau/gotdbot/logger"
 )
 
 func main() {
-	cfg := config.Load()
+	appLogger := logger.New()
+	cfg := config.Load(appLogger)
 	database, err := db.Connect(cfg)
 	if err != nil {
-		log.Fatalf("Failed to connect to DB: %v", err)
+		appLogger.Errorf("Failed to connect to DB. Check the server configuration: %s", utils.ErrorDetails(err))
+		os.Exit(1)
 	}
 
 	oauth := github.NewOAuth(cfg)
@@ -41,105 +44,123 @@ func main() {
 	// TODO: add cfg.ApiID or cfg.ApiHash
 
 	bot, err := gotdbot.NewClient(6, "eb06d4abfb49dc3eeb1aeb98ae0f581e", cfg.TelegramToken, &gotdbot.ClientOpts{
+		Logger:      appLogger,
 		LibraryPath: "./libtdjson.so.1.8.68",
 		AutoRetry:   &gotdbot.AutoRetry{MaxFloodWait: 10 * time.Second, ChatNotFound: true},
 	})
 
 	if err != nil {
-		log.Fatalf("Failed to create bot: %v", err)
+		appLogger.Errorf("Failed to create bot. Check the server configuration: %s", utils.ErrorDetails(err))
+		os.Exit(1)
 	}
 
 	bot.OnUpdateNewChat(middleware.TrackChat(database), nil)
 	//bot.OnUpdateUser(middleware.TrackUser(database), nil)
 
+	// Register commands once so private-chat fallbacks can identify unknown names.
+	registeredCommands := map[string]bool{}
+	registerCommand := func(name string, handler func(*gotdbot.Client, *gotdbot.Message) error) {
+		registeredCommands[name] = true
+		bot.OnCommand(name, handler)
+	}
 	// Commands
 	cmdHandler := commands.NewCommandHandler(cfg, database, oauth, oauthStateCache, clientFactory, cfg.EncryptionKey, contextCache, adminCache, reloadRateLimit)
-	bot.OnCommand("start", cmdHandler.Start)
-	bot.OnCommand("connect", cmdHandler.Connect)
-	bot.OnCommand("disconnect", cmdHandler.Logout)
-	bot.OnCommand("logout", cmdHandler.Logout)
-	bot.OnCommand("me", cmdHandler.Me)
+	registerCommand("start", cmdHandler.Start)
+	registerCommand("connect", cmdHandler.Connect)
+	registerCommand("disconnect", cmdHandler.Logout)
+	registerCommand("logout", cmdHandler.Logout)
+	registerCommand("me", cmdHandler.Me)
 
-	bot.OnCommand("add", cmdHandler.AddRepo)
-	bot.OnCommand("addrepo", cmdHandler.AddRepo)
-	bot.OnCommand("rm", cmdHandler.RemoveRepo)
-	bot.OnCommand("removerepo", cmdHandler.RemoveRepo)
-	bot.OnCommand("repos", cmdHandler.Repos)
-	bot.OnCommand("repo", cmdHandler.Repo)
-	bot.OnCommand("star", cmdHandler.Star)
-	bot.OnCommand("unstar", cmdHandler.Unstar)
-	bot.OnCommand("watch", cmdHandler.Watch)
-	bot.OnCommand("unwatch", cmdHandler.Unwatch)
-	bot.OnCommand("fork", cmdHandler.Fork)
-	bot.OnCommand("archive", cmdHandler.Archive)
-	bot.OnCommand("unarchive", cmdHandler.Unarchive)
-	bot.OnCommand("contributors", cmdHandler.Contributors)
-	bot.OnCommand("languages", cmdHandler.Languages)
-	bot.OnCommand("branches", cmdHandler.Branches)
-	bot.OnCommand("branch", cmdHandler.Branch)
-	bot.OnCommand("default", cmdHandler.Default)
+	registerCommand("add", cmdHandler.AddRepo)
+	registerCommand("addrepo", cmdHandler.AddRepo)
+	registerCommand("rm", cmdHandler.RemoveRepo)
+	registerCommand("removerepo", cmdHandler.RemoveRepo)
+	registerCommand("repos", cmdHandler.Repos)
+	registerCommand("repo", cmdHandler.Repo)
+	registerCommand("star", cmdHandler.Star)
+	registerCommand("unstar", cmdHandler.Unstar)
+	registerCommand("watch", cmdHandler.Watch)
+	registerCommand("unwatch", cmdHandler.Unwatch)
+	registerCommand("fork", cmdHandler.Fork)
+	registerCommand("archive", cmdHandler.Archive)
+	registerCommand("unarchive", cmdHandler.Unarchive)
+	registerCommand("contributors", cmdHandler.Contributors)
+	registerCommand("languages", cmdHandler.Languages)
+	registerCommand("branches", cmdHandler.Branches)
+	registerCommand("branch", cmdHandler.Branch)
+	registerCommand("default", cmdHandler.Default)
 
-	bot.OnCommand("issue", cmdHandler.Issue)
-	bot.OnCommand("comment", cmdHandler.Comment)
-	bot.OnCommand("close", cmdHandler.Close)
-	bot.OnCommand("reopen", cmdHandler.Reopen)
-	bot.OnCommand("assign", cmdHandler.Assign)
-	bot.OnCommand("assignme", cmdHandler.AssignMe)
-	bot.OnCommand("unassign", cmdHandler.Unassign)
-	bot.OnCommand("label", cmdHandler.Label)
-	bot.OnCommand("labels", cmdHandler.Labels)
-	bot.OnCommand("milestone", cmdHandler.Milestone)
-	bot.OnCommand("lock", cmdHandler.Lock)
-	bot.OnCommand("unlock", cmdHandler.Unlock)
-	bot.OnCommand("pin", cmdHandler.Pin)
-	bot.OnCommand("unpin", cmdHandler.Unpin)
+	registerCommand("issue", cmdHandler.Issue)
+	registerCommand("comment", cmdHandler.Comment)
+	registerCommand("close", cmdHandler.Close)
+	registerCommand("reopen", cmdHandler.Reopen)
+	registerCommand("assign", cmdHandler.Assign)
+	registerCommand("assignme", cmdHandler.AssignMe)
+	registerCommand("unassign", cmdHandler.Unassign)
+	registerCommand("label", cmdHandler.Label)
+	registerCommand("labels", cmdHandler.Labels)
+	registerCommand("milestone", cmdHandler.Milestone)
+	registerCommand("lock", cmdHandler.Lock)
+	registerCommand("unlock", cmdHandler.Unlock)
+	registerCommand("pin", cmdHandler.Pin)
+	registerCommand("unpin", cmdHandler.Unpin)
 
-	bot.OnCommand("approve", cmdHandler.Approve)
-	bot.OnCommand("requestchanges", cmdHandler.RequestChanges)
-	bot.OnCommand("merge", cmdHandler.Merge)
-	bot.OnCommand("draft", cmdHandler.Draft)
-	bot.OnCommand("ready", cmdHandler.Ready)
-	bot.OnCommand("checks", cmdHandler.Checks)
-	bot.OnCommand("files", cmdHandler.Files)
-	bot.OnCommand("diff", cmdHandler.Diff)
-	bot.OnCommand("reviews", cmdHandler.Reviews)
-	bot.OnCommand("mergeable", cmdHandler.Mergeable)
-	bot.OnCommand("request", cmdHandler.RequestReview)
+	registerCommand("approve", cmdHandler.Approve)
+	registerCommand("requestchanges", cmdHandler.RequestChanges)
+	registerCommand("merge", cmdHandler.Merge)
+	registerCommand("draft", cmdHandler.Draft)
+	registerCommand("ready", cmdHandler.Ready)
+	registerCommand("checks", cmdHandler.Checks)
+	registerCommand("files", cmdHandler.Files)
+	registerCommand("diff", cmdHandler.Diff)
+	registerCommand("reviews", cmdHandler.Reviews)
+	registerCommand("mergeable", cmdHandler.Mergeable)
+	registerCommand("request", cmdHandler.RequestReview)
 
-	bot.OnCommand("commit", cmdHandler.Commit)
-	bot.OnCommand("commits", cmdHandler.Commits)
-	bot.OnCommand("compare", cmdHandler.Compare)
+	registerCommand("commit", cmdHandler.Commit)
+	registerCommand("commits", cmdHandler.Commits)
+	registerCommand("compare", cmdHandler.Compare)
 
-	bot.OnCommand("actions", cmdHandler.Actions)
-	bot.OnCommand("run", cmdHandler.RunWorkflow)
-	bot.OnCommand("rerun", cmdHandler.RerunWorkflow)
-	bot.OnCommand("cancel", cmdHandler.CancelWorkflow)
-	bot.OnCommand("logs", cmdHandler.WorkflowLogs)
+	registerCommand("actions", cmdHandler.Actions)
+	registerCommand("run", cmdHandler.RunWorkflow)
+	registerCommand("rerun", cmdHandler.RerunWorkflow)
+	registerCommand("cancel", cmdHandler.CancelWorkflow)
+	registerCommand("logs", cmdHandler.WorkflowLogs)
 
-	bot.OnCommand("release", cmdHandler.Release)
-	bot.OnCommand("changelog", cmdHandler.Changelog)
+	registerCommand("release", cmdHandler.Release)
+	registerCommand("changelog", cmdHandler.Changelog)
 
-	bot.OnCommand("discussion", cmdHandler.CreateDiscussion)
-	bot.OnCommand("answered", cmdHandler.Answered)
+	registerCommand("discussion", cmdHandler.CreateDiscussion)
+	registerCommand("answered", cmdHandler.Answered)
 
-	bot.OnCommand("find", cmdHandler.Find)
-	bot.OnCommand("pr", cmdHandler.PRSearch)
-	bot.OnCommand("search", cmdHandler.SearchCode)
+	registerCommand("find", cmdHandler.Find)
+	registerCommand("pr", cmdHandler.PRSearch)
+	registerCommand("search", cmdHandler.SearchCode)
 
-	bot.OnCommand("mute", cmdHandler.Mute)
-	bot.OnCommand("done", cmdHandler.Done)
-	bot.OnCommand("read", cmdHandler.Read)
-	bot.OnCommand("stats", cmdHandler.Stats)
-	bot.OnCommand("activity", cmdHandler.Activity)
+	registerCommand("mute", cmdHandler.Mute)
+	registerCommand("done", cmdHandler.Done)
+	registerCommand("read", cmdHandler.Read)
+	registerCommand("stats", cmdHandler.Stats)
+	registerCommand("activity", cmdHandler.Activity)
 
-	bot.OnCommand("config", cmdHandler.Settings)
-	bot.OnCommand("settings", cmdHandler.Settings)
-	bot.OnCommand("reload", cmdHandler.Reload)
-	bot.OnCommand("privacy", cmdHandler.Privacy)
-	bot.OnCommand("help", cmdHandler.Help)
+	registerCommand("config", cmdHandler.Settings)
+	registerCommand("settings", cmdHandler.Settings)
+	registerCommand("reload", cmdHandler.Reload)
+	registerCommand("privacy", cmdHandler.Privacy)
+	registerCommand("help", cmdHandler.Help)
 
 	replyHandler := commands.NewReplyHandler(database, clientFactory, cfg.EncryptionKey, contextCache)
 	bot.OnUpdateNewMessage(func(c *gotdbot.Client, u *gotdbot.UpdateNewMessage) error {
+		if u.Message != nil && u.Message.IsPrivate() && u.Message.IsCommand() {
+			parts := strings.Fields(u.Message.GetText())
+			if len(parts) > 0 {
+				command := strings.Split(strings.TrimPrefix(parts[0], "/"), "@")[0]
+				if !registeredCommands[command] {
+					_, err := u.Message.ReplyText(c, "Unknown command. Use /help to see the available commands.", nil)
+					return err
+				}
+			}
+		}
 		if u.Message != nil && u.Message.ReplyToMessageID() != 0 && !u.Message.IsCommand() {
 			return replyHandler.HandleReply(c, u.Message)
 		}
@@ -154,12 +175,13 @@ func main() {
 		} else if strings.HasPrefix(data, "act:") {
 			return cbHandler.HandlePRAction(c, u)
 		}
-		return nil
+		return u.Answer(c, "This interaction is no longer supported. Open /settings again.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 	}, nil)
 
 	err = bot.Start()
 	if err != nil {
-		log.Fatalf("Failed to start bot: %v", err)
+		appLogger.Errorf("Failed to start bot. Check the server configuration: %s", utils.ErrorDetails(err))
+		os.Exit(1)
 	}
 
 	me, err := bot.GetMe()
@@ -189,37 +211,37 @@ func main() {
 		state := r.URL.Query().Get("state")
 
 		if code == "" {
-			http.Error(w, "Missing code", http.StatusBadRequest)
+			http.Error(w, "GitHub did not provide an authorization code. Return to Telegram and use /connect again.", http.StatusBadRequest)
 			return
 		}
 
 		telegramID, ok := oauthStateCache.Get(state)
 		if !ok {
-			http.Error(w, "Invalid or expired state", http.StatusBadRequest)
+			http.Error(w, "This connection link has expired or is invalid. Return to Telegram and use /connect again.", http.StatusBadRequest)
 			return
 		}
 
 		oauthStateCache.Delete(state)
 		token, err := oauth.ExchangeCode(context.Background(), code)
 		if err != nil {
-			http.Error(w, "Failed to exchange code", http.StatusInternalServerError)
+			http.Error(w, "GitHub authorization failed. Return to Telegram and use /connect again.", http.StatusInternalServerError)
 			return
 		}
 
 		encToken, err := utils.Encrypt(token.AccessToken, cfg.EncryptionKey)
 		if err != nil {
-			http.Error(w, "Encryption failed", http.StatusInternalServerError)
+			http.Error(w, "Could not save the GitHub connection. Please try /connect again.", http.StatusInternalServerError)
 			return
 		}
 
 		ghClient, err := clientFactory.GetUserClient(context.Background(), token.AccessToken)
 		if err != nil {
-			http.Error(w, "Failed to create GitHub client", http.StatusInternalServerError)
+			http.Error(w, "GitHub is unavailable. Please try /connect again later.", http.StatusInternalServerError)
 			return
 		}
 		u, _, err := ghClient.Users.Get(context.Background(), "")
 		if err != nil {
-			http.Error(w, "Failed to fetch user", http.StatusInternalServerError)
+			http.Error(w, "Could not verify your GitHub account. Please try /connect again.", http.StatusInternalServerError)
 			return
 		}
 
@@ -231,11 +253,11 @@ func main() {
 		}
 
 		if err = database.UpsertUser(context.Background(), user); err != nil {
-			http.Error(w, "DB Error", http.StatusInternalServerError)
+			http.Error(w, "Could not save the GitHub connection. Please try /connect again later.", http.StatusInternalServerError)
 			return
 		}
 
-		_, _ = bot.SendMessage(telegramID, fmt.Sprintf("✅ GitHub account <b>%s</b> connected successfully!", u.GetLogin()), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+		_, _ = bot.SendMessage(telegramID, "<b>GitHub connected</b>\n\nAccount: "+utils.Code(u.GetLogin())+"\nUse /addrepo to choose a repository.", &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 
 		html := fmt.Sprintf(`
 		<html>
@@ -255,8 +277,9 @@ func main() {
 		_, _ = w.Write([]byte(html))
 	})
 
-	log.Printf("Server listening on port %s", cfg.Port)
+	bot.Logger.Infof("Server listening on port %s", cfg.Port)
 	if err = http.ListenAndServe(":"+cfg.Port, nil); err != nil {
-		log.Fatalf("Server failed: %v", err)
+		appLogger.Errorf("Server failed. Check the server configuration: %s", utils.ErrorDetails(err))
+		os.Exit(1)
 	}
 }

@@ -1,2 +1,4 @@
 .idea
 .env
+*_test.go
+README.md
