@@ -94,11 +94,30 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	r.Body = io.NopCloser(bytes.NewReader(body))
-	payloadBytes, err := github.ValidatePayload(r, []byte(s.Config.GitHubWebhookSecret))
+	signature := r.Header.Get(github.SHA256SignatureHeader)
+	if signature == "" {
+		signature = r.Header.Get(github.SHA1SignatureHeader)
+	}
+	err = github.ValidateSignature(signature, body, []byte(s.Config.GitHubWebhookSecret))
 	if err != nil {
-		s.logMalformed("Validate webhook signature", err)
-		http.Error(w, "Webhook signature or content type is invalid. Check the configured webhook secret and content type.", http.StatusUnauthorized)
+		reason := "invalid_signature"
+		recovery := "The webhook signature header is malformed. Check that your proxy forwards GitHub's original signing headers."
+		switch err.Error() {
+		case "missing signature":
+			reason = "missing_signature"
+			recovery = "No webhook signature was received. Set the GitHub webhook Secret to the running bot's GITHUB_WEBHOOK_SECRET and ensure your proxy forwards X-Hub-Signature-256."
+		case "payload signature check failed":
+			reason = "signature_mismatch"
+			recovery = "Webhook signature mismatch. Set the GitHub webhook Secret to the running bot's GITHUB_WEBHOOK_SECRET and ensure your proxy preserves the original request body."
+		}
+		s.logMalformed(fmt.Sprintf("Webhook rejected reason=%s response_status=401 chat_id=%d topic_id=%d delivery_id=%q: %s", reason, chatID, topicID, utils.Clip(github.DeliveryID(r), 100), recovery), nil)
+		http.Error(w, recovery, http.StatusUnauthorized)
+		return
+	}
+	payloadBytes, err := github.ValidatePayloadFromBody(mediaType, bytes.NewReader(body), "", nil)
+	if err != nil {
+		s.logMalformed("Invalid webhook body encoding response_status=400", err)
+		http.Error(w, "Invalid webhook body encoding. Use application/json or a form with a valid payload field.", http.StatusBadRequest)
 		return
 	}
 	var raw map[string]json.RawMessage
@@ -234,7 +253,10 @@ func (s *WebhookServer) logMalformed(stage string, err error) {
 	}
 	s.lastMalformed = time.Now()
 	s.deliveryMu.Unlock()
-	s.Bot.Logger.Warnf("%s: %s", stage, utils.ErrorDetails(err))
+	if err != nil {
+		stage += ": " + utils.ErrorDetails(err)
+	}
+	s.Bot.Logger.Warnf("%s", stage)
 }
 
 func (s *WebhookServer) processEvent(event any, eventType string, payloadBytes []byte, chatID int64, topicID int32, hookID int64) error {

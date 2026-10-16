@@ -177,12 +177,11 @@ func ErrorDetails(err error) string {
 	if errors.Is(err, gotdbot.SendTimeout) {
 		return fmt.Sprintf("error_type=%T telegram_timeout=true", err)
 	}
-	status := 0
 	var api *gh.ErrorResponse
-	if errors.As(err, &api) && api.Response != nil {
-		status = api.Response.StatusCode
+	if errors.As(err, &api) && api.Response != nil && api.Response.StatusCode != 0 {
+		return fmt.Sprintf("error_type=%T http_status=%d", err, api.Response.StatusCode)
 	}
-	return fmt.Sprintf("error_type=%T http_status=%d", err, status)
+	return fmt.Sprintf("error_type=%T", err)
 }
 
 func ShortSHA(s string) string {

@@ -184,6 +184,10 @@ func (h *CallbackHandler) HandleSettings(c *gotdbot.Client, u *gotdbot.UpdateNew
 			}
 
 			hook.Events = newEvents
+			if hook.Config == nil {
+				hook.Config = &gh.HookConfig{}
+			}
+			hook.Config.Secret = new(h.Config.GitHubWebhookSecret)
 			_, _, editErr := ghClient.Repositories.EditHook(context.Background(), owner, repoName, link.WebhookID, hook)
 			if editErr != nil {
 				if h.handleAuthError(c, u, editErr) {
@@ -290,6 +294,10 @@ func (h *CallbackHandler) handlePresets(c *gotdbot.Client, u *gotdbot.UpdateNewC
 	}
 
 	hook.Events = newEvents
+	if hook.Config == nil {
+		hook.Config = &gh.HookConfig{}
+	}
+	hook.Config.Secret = new(h.Config.GitHubWebhookSecret)
 	_, _, editErr := ghClient.Repositories.EditHook(context.Background(), owner, repoName, l.WebhookID, hook)
 	if editErr != nil {
 		if h.handleAuthError(c, u, editErr) {
