@@ -9,7 +9,6 @@ import (
 	"io"
 	"mime"
 	"net/http"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -27,7 +26,6 @@ import (
 )
 
 type WebhookServer struct {
-	sendMessage     func(int64, string, *gotdbot.SendMessageOpts) (*gotdbot.Message, error)
 	deliveryMu      sync.Mutex
 	deliveries      map[string]deliveryEntry
 	lastUnsupported time.Time
@@ -89,8 +87,7 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 25<<20)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		var sizeErr *http.MaxBytesError
-		if errors.As(err, &sizeErr) {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			http.Error(w, "Webhook payload is too large.", http.StatusRequestEntityTooLarge)
 		} else {
 			http.Error(w, "Could not read the webhook payload.", http.StatusBadRequest)
@@ -261,16 +258,11 @@ func (s *WebhookServer) processEvent(event any, eventType string, payloadBytes [
 	}
 	msg, markup := formatEvent(eventType, payloadBytes)
 
-	if msg == "" {
+	if msg == nil {
 		return fmt.Errorf("event has no formatter")
 	}
 
-	msg = normalizeMessage(msg)
-
-	opts := &gotdbot.SendMessageOpts{
-		ParseMode:             gotdbot.ParseModeHTML,
-		DisableWebPagePreview: true,
-	}
+	opts := &gotdbot.SendMessageOpts{}
 
 	if topicID != 0 {
 		opts.TopicId = &gotdbot.MessageTopicForum{ForumTopicId: topicID}
@@ -280,14 +272,10 @@ func (s *WebhookServer) processEvent(event any, eventType string, payloadBytes [
 		opts.ReplyMarkup = markup
 	}
 
-	send := s.sendMessage
-	if send == nil {
-		if s.Bot == nil {
-			return fmt.Errorf("Telegram client is unavailable")
-		}
-		send = s.Bot.SendMessage
+	if s.Bot == nil {
+		return fmt.Errorf("Telegram client is unavailable")
 	}
-	sentMsg, err := send(chatID, msg, opts)
+	sentMsg, err := s.Bot.SendRichMessage(chatID, msg, opts)
 	if err != nil {
 		return err
 	}
@@ -298,23 +286,4 @@ func (s *WebhookServer) processEvent(event any, eventType string, payloadBytes [
 		}
 	}
 	return nil
-}
-
-// normalizeMessage trims trailing spaces on each line, collapses 3+ consecutive newlines into 2
-func normalizeMessage(s string) string {
-	if s == "" {
-		return s
-	}
-
-	lines := strings.Split(s, "\n")
-	for i, ln := range lines {
-		lines[i] = strings.TrimRight(ln, " \t")
-	}
-	out := strings.Join(lines, "\n")
-
-	re := regexp.MustCompile(`\n{3,}`)
-	out = re.ReplaceAllString(out, "\n\n")
-
-	out = strings.TrimSpace(out)
-	return out
 }

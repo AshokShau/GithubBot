@@ -95,7 +95,7 @@ type payload map[string]any
 
 func (p payload) value(path string) any {
 	var v any = map[string]any(p)
-	for _, key := range strings.Split(path, ".") {
+	for key := range strings.SplitSeq(path, ".") {
 		m, ok := v.(map[string]any)
 		if !ok {
 			return nil
@@ -129,16 +129,16 @@ func firstURL(values ...string) string {
 
 var repositoryNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9_.-]+$`)
 
-func formatEvent(name string, body []byte) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
+func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.ReplyMarkupInlineKeyboard) {
 	spec, ok := eventSpecs[name]
 	if !ok {
-		return "", nil
+		return nil, nil
 	}
 	var p payload
 	decoder := json.NewDecoder(strings.NewReader(string(body)))
 	decoder.UseNumber()
 	if decoder.Decode(&p) != nil || p == nil {
-		return "", nil
+		return nil, nil
 	}
 
 	resource := p
@@ -220,26 +220,27 @@ func formatEvent(name string, body []byte) (string, *gotdbot.ReplyMarkupInlineKe
 			}
 		}
 	}
+	var excerpt string
 	for _, field := range spec.fields {
+		if field == "body" || field == "output.summary" {
+			excerpt, _ = resource.value(field).(string)
+			continue
+		}
 		value := resource.text(field)
 		if value == "" {
 			continue
 		}
-		label := map[string]string{"head.ref": "Source branch", "base.ref": "Target branch", "head_branch": "Branch", "target_commitish": "Target", "body": "Excerpt", "name": "Name", "state": "State", "run_number": "Run", "sha": "Commit", "head_sha": "Commit", "commit_id": "Commit"}[field]
+		label := map[string]string{"head.ref": "Source branch", "base.ref": "Target branch", "head_branch": "Branch", "target_commitish": "Target", "name": "Name", "state": "State", "run_number": "Run", "sha": "Commit", "head_sha": "Commit", "commit_id": "Commit"}[field]
 		if label == "" {
 			parts := strings.Split(field, ".")
 			label = strings.ReplaceAll(parts[len(parts)-1], "_", " ")
 			label = strings.ToUpper(label[:1]) + label[1:]
 		}
-		limit := 200
 		if field == "title" && title != "" {
 			continue
 		}
-		if field == "body" || field == "output.summary" {
-			limit = 650
-		}
-		value = utils.Clip(value, limit)
-		if field == "body" || strings.Contains(field, "summary") || strings.Contains(field, "description") {
+		value = utils.Clip(value, 200)
+		if strings.Contains(field, "summary") || strings.Contains(field, "description") {
 			line(label, html.EscapeString(value))
 		} else {
 			line(label, utils.Code(value))
@@ -252,7 +253,7 @@ func formatEvent(name string, body []byte) (string, *gotdbot.ReplyMarkupInlineKe
 			}
 		}
 		if action == "opened" || action == "edited" {
-			line("Excerpt", html.EscapeString(utils.Clip(resource.text("body"), 650)))
+			excerpt, _ = resource.value("body").(string)
 		}
 	}
 	switch name {
@@ -281,7 +282,7 @@ func formatEvent(name string, body []byte) (string, *gotdbot.ReplyMarkupInlineKe
 			}
 			commit := payload(m)
 			sha := commit.text("id")
-			subject := strings.Split(commit.text("message"), "\n")[0]
+			subject, _, _ := strings.Cut(commit.text("message"), "\n")
 			author := cmp.Or(commit.text("author.username"), commit.text("author.name"))
 			commitURL := commit.text("url")
 			if commitURL == "" && repoURL != "" && sha != "" {
@@ -340,9 +341,14 @@ func formatEvent(name string, body []byte) (string, *gotdbot.ReplyMarkupInlineKe
 		line("Previous name", utils.Code(p.text("changes.repository.name.from")))
 	}
 
-	message := utils.LimitHTML(strings.TrimSpace(b.String()), 3400)
-	if utils.SafeURL(targetURL) != "" {
-		message += "\n\n" + utils.Link("View on GitHub", targetURL)
+	header := utils.LimitHTML(strings.TrimSpace(b.String()), 3400)
+	if targetURL != "" {
+		header += "\n\n" + utils.Link("View on GitHub", targetURL)
+	}
+	header = "<p>" + strings.ReplaceAll(header, "\n", "<br>") + "</p>"
+	message := &gotdbot.InputRichMessage{Source: &gotdbot.RichMessageSourceHtml{Text: header}}
+	if strings.TrimSpace(excerpt) != "" {
+		message.Source = &gotdbot.RichMessageSourceMarkdown{Text: header + "\n\n" + utils.Clip(excerpt, 8000)}
 	}
 
 	if targetURL == "" {

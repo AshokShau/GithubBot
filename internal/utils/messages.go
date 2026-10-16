@@ -6,6 +6,7 @@ import (
 	"html"
 	"io"
 	"net/url"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -129,8 +130,8 @@ func LimitHTML(s string, limit int) string {
 			break
 		}
 	}
-	for i := len(stack) - 1; i >= 0; i-- {
-		out.WriteString("</" + stack[i] + ">")
+	for _, s := range slices.Backward(stack) {
+		out.WriteString("</" + s + ">")
 	}
 	if truncated {
 		out.WriteString("…")

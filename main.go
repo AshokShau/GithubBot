@@ -154,7 +154,7 @@ func main() {
 		if u.Message != nil && u.Message.IsPrivate() && u.Message.IsCommand() {
 			parts := strings.Fields(u.Message.GetText())
 			if len(parts) > 0 {
-				command := strings.Split(strings.TrimPrefix(parts[0], "/"), "@")[0]
+				command, _, _ := strings.Cut(strings.TrimPrefix(parts[0], "/"), "@")
 				if !registeredCommands[command] {
 					_, err := u.Message.ReplyText(c, "Unknown command. Use /help to see the available commands.", nil)
 					return err

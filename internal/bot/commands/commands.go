@@ -556,7 +556,7 @@ func (h *CommandHandler) Help(c *gotdbot.Client, m *gotdbot.Message) error {
 
 	// Keep the complete command reference available in two short messages.
 	var chunk strings.Builder
-	for _, section := range strings.Split(msg, "\n\n") {
+	for section := range strings.SplitSeq(msg, "\n\n") {
 		if chunk.Len()+len(section) > 3000 {
 			if _, err := m.ReplyText(c, chunk.String(), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true}); err != nil {
 				return err
@@ -2761,27 +2761,24 @@ func (h *CommandHandler) Release(c *gotdbot.Client, m *gotdbot.Message) error {
 	}
 
 	msg := fmt.Sprintf(
-		"<b>Latest Release (%s/%s):</b>\n\n"+
-			"• <b>Name:</b> %s\n"+
-			"• <b>Tag:</b> %s\n"+
-			"• <b>Published:</b> %s\n"+
-			"• <b>URL:</b> %s",
-		html.EscapeString(owner), html.EscapeString(repo),
-		html.EscapeString(name),
-		html.EscapeString(rel.GetTagName()),
-		html.EscapeString(rel.GetPublishedAt().Format("2006-01-02 15:04")),
-		utils.Link("View release", rel.GetHTMLURL()),
+		"<b>Latest release</b>\n\n"+
+			"<b>Repository:</b> %s\n"+
+			"<b>Name:</b> %s\n"+
+			"<b>Tag:</b> %s",
+		utils.Code(owner+"/"+repo), html.EscapeString(utils.Clip(name, 240)), utils.Code(utils.Clip(rel.GetTagName(), 160)),
 	)
+	if published := rel.GetPublishedAt(); !published.IsZero() {
+		msg += "\n<b>Published:</b> " + published.Format("2006-01-02 15:04 UTC")
+	}
+	msg += "\n\n" + utils.Link("View release on GitHub", rel.GetHTMLURL())
 
-	if rel.GetBody() != "" {
-		body := rel.GetBody()
-		if len(body) > 300 {
-			body = utils.Clip(body, 300)
-		}
-		msg += fmt.Sprintf("\n\n<b>Notes:</b>\n<i>%s</i>", html.EscapeString(body))
+	if body := rel.GetBody(); strings.TrimSpace(body) != "" {
+		richMarkdown := "<p>" + strings.ReplaceAll(msg, "\n", "<br>") + "</p>\n\n" + utils.Clip(body, 8000)
+		_, err = m.ReplyRichMessageMarkdown(c, richMarkdown, nil)
+		return err
 	}
 
-	_, err = m.ReplyText(c, utils.LimitHTML(msg, utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	_, err = m.ReplyRichMessageHTML(c, "<p>"+strings.ReplaceAll(msg, "\n", "<br>")+"</p>", nil)
 	return err
 }
 
@@ -2817,9 +2814,13 @@ func (h *CommandHandler) Changelog(c *gotdbot.Client, m *gotdbot.Message) error 
 		return nil
 	}
 
-	msg := fmt.Sprintf("<b>Generated Changelog (%s/%s):</b>\n\n%s", html.EscapeString(owner), html.EscapeString(repo), html.EscapeString(notes.GetBody()))
-
-	_, err = m.ReplyText(c, utils.LimitHTML(msg, utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	header := "<b>Generated changelog</b>\n\n<b>Repository:</b> " + utils.Code(owner+"/"+repo) + "\n<b>Tag:</b> " + utils.Code(utils.Clip(tagName, 160)) + "\n\n" + utils.Link("View releases on GitHub", "https://github.com/"+owner+"/"+repo+"/releases")
+	if strings.TrimSpace(notes.GetBody()) == "" {
+		_, err = m.ReplyRichMessageHTML(c, "<p>"+strings.ReplaceAll(header, "\n", "<br>")+"</p><p>GitHub returned no release notes for this tag.</p>", nil)
+		return err
+	}
+	richMarkdown := "<p>" + strings.ReplaceAll(header, "\n", "<br>") + "</p>\n\n" + utils.Clip(notes.GetBody(), 8000)
+	_, err = m.ReplyRichMessageMarkdown(c, richMarkdown, nil)
 	return err
 }
 
