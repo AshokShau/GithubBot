@@ -155,7 +155,7 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 		s.finishDelivery(key, err == nil)
 	}
 	if err != nil {
-		s.Bot.Logger.Warnf("Process webhook %s: %s", eventType, utils.ErrorDetails(err))
+		s.Bot.Logger.Warnf("Webhook processing failed event=%s chat_id=%d topic_id=%d: %s", eventType, chatID, topicID, utils.ErrorDetails(err))
 		http.Error(w, "Webhook processing failed. Redeliver this event after resolving the delivery problem.", http.StatusBadGateway)
 		return
 	}

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/AshokShau/gotdbot"
 	gh "github.com/google/go-github/v92/github"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	xhtml "golang.org/x/net/html"
@@ -165,6 +166,17 @@ func OperationError(operation string, err error) string {
 }
 
 func ErrorDetails(err error) string {
+	var telegramError *gotdbot.Error
+	if errors.As(err, &telegramError) {
+		details := fmt.Sprintf("error_type=%T telegram_code=%d", err, telegramError.Code)
+		if retryAfter := telegramError.GetRetryAfter(); retryAfter > 0 {
+			details += fmt.Sprintf(" retry_after_seconds=%d", retryAfter)
+		}
+		return details
+	}
+	if errors.Is(err, gotdbot.SendTimeout) {
+		return fmt.Sprintf("error_type=%T telegram_timeout=true", err)
+	}
 	status := 0
 	var api *gh.ErrorResponse
 	if errors.As(err, &api) && api.Response != nil {

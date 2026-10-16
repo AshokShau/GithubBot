@@ -47,6 +47,10 @@ func main() {
 		Logger:      appLogger,
 		LibraryPath: "./libtdjson.so.1.8.68",
 		AutoRetry:   &gotdbot.AutoRetry{MaxFloodWait: 10 * time.Second, ChatNotFound: true},
+		ErrorHandler: func(c *gotdbot.Client, update gotdbot.TlObject, err error) error {
+			c.Logger.Errorf("Bot handler failed update=%s chat_id=%d: %s", update.GetType(), c.UpdateChatID(update), utils.ErrorDetails(err))
+			return nil
+		},
 	})
 
 	if err != nil {
