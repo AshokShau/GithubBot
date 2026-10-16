@@ -340,7 +340,7 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 				referenceURL = repoURL + "/tree/" + url.PathEscape(branch)
 			}
 		}
-		b.WriteString("<b>" + heading + "</b>")
+		b.WriteString("<p><b>" + heading + "</b>")
 		if referenceLabel != "" {
 			b.WriteString(" " + utils.Link(utils.Clip(referenceLabel, 240), referenceURL))
 		}
@@ -352,24 +352,30 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 			changes = append(changes, referenceType+" created")
 		}
 		if len(changes) > 0 {
-			b.WriteString("\n<i>" + strings.Join(changes, " · ") + "</i>")
+			b.WriteString("<br><i>" + strings.Join(changes, " · ") + "</i>")
 		}
-		b.WriteString("\n\n")
-		for _, commit := range commits[:min(len(commits), 5)] {
+		b.WriteString("</p>\n\n")
+		shown := min(len(commits), 5)
+		for _, commit := range commits[:shown] {
 			sha := cmp.Or(commit.GetID(), commit.GetSHA())
-			subject, _, _ := strings.Cut(strings.TrimSpace(commit.GetMessage()), "\n")
+			subject, description, _ := strings.Cut(strings.TrimSpace(strings.ReplaceAll(commit.GetMessage(), "\r\n", "\n")), "\n")
+			description = strings.TrimSpace(description)
 			commitURL := firstURL(commit.GetURL())
 			if commitURL == "" && repoURL != "" && sha != "" {
 				commitURL = repoURL + "/commit/" + url.PathEscape(sha)
 			}
-			b.WriteString("- ")
+			b.WriteString("<p>- ")
 			if sha != "" {
 				b.WriteString(utils.Link(utils.ShortSHA(sha), commitURL))
 				if subject != "" {
 					b.WriteString(": ")
 				}
 			}
-			b.WriteString(html.EscapeString(utils.Clip(subject, 220)))
+			if description != "" {
+				b.WriteString("<b>" + html.EscapeString(utils.Clip(subject, 220)) + "</b>")
+			} else {
+				b.WriteString(html.EscapeString(utils.Clip(subject, 220)))
+			}
 			author := cmp.Or(commit.GetAuthor().GetLogin(), commit.GetAuthor().GetName())
 			if author != "" {
 				authorURL := ""
@@ -378,14 +384,20 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 				}
 				b.WriteString(" by " + utils.Link(utils.Clip(author, 80), authorURL))
 			}
-			b.WriteByte('\n')
+			b.WriteString("</p>\n")
+			if description != "" {
+				// Share the description budget so every displayed commit fits.
+				b.WriteString("<details><summary>Commit description</summary>\n<p>" +
+					strings.ReplaceAll(html.EscapeString(utils.Clip(description, 1000/shown)), "\n", "<br>") +
+					"</p></details>\n\n")
+			}
 		}
-		if remaining := count - min(len(commits), 5); remaining > 0 && !push.GetDeleted() {
+		if remaining := count - shown; remaining > 0 && !push.GetDeleted() {
 			noun := "commits"
 			if remaining == 1 {
 				noun = "commit"
 			}
-			b.WriteString(fmt.Sprintf("… %d more %s.\n", remaining, noun))
+			b.WriteString(fmt.Sprintf("<p>… %d more %s.</p>\n", remaining, noun))
 		}
 		if actor != "" && (len(commits) != 1 || (commits[0].GetAuthor().GetLogin() != actor && commits[0].GetAuthor().GetName() != actor)) {
 			if len(commits) > 0 || count > 0 && !push.GetDeleted() {
@@ -397,7 +409,7 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 			} else if push.GetCreated() && count == 0 {
 				verb = "Created"
 			}
-			b.WriteString(verb + " by " + utils.Link(utils.Clip(actor, 100), p.text("sender.html_url")) + "\n")
+			b.WriteString("<p>" + verb + " by " + utils.Link(utils.Clip(actor, 100), p.text("sender.html_url")) + "</p>\n")
 		}
 		buttonLabel = "Compare Changes"
 		targetURL = firstURL(push.GetCompare(), referenceURL, repoURL)
@@ -466,8 +478,11 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 		line("Previous name", utils.Code(p.text("changes.repository.name.from")))
 	}
 
-	header := utils.LimitHTML(strings.TrimSpace(b.String()), 3400)
-	header = "<p>" + strings.ReplaceAll(header, "\n", "<br>") + "</p>"
+	header := strings.TrimSpace(b.String())
+	if name != "push" {
+		header = utils.LimitHTML(header, 3400)
+		header = "<p>" + strings.ReplaceAll(header, "\n", "<br>") + "</p>"
+	}
 	message := &gotdbot.InputRichMessage{Source: &gotdbot.RichMessageSourceHtml{Text: header}}
 	if strings.TrimSpace(excerpt) != "" {
 		message.Source = &gotdbot.RichMessageSourceMarkdown{Text: header + "\n\n" + utils.GitHubMarkdown(utils.Clip(excerpt, 8000), repoURL)}
