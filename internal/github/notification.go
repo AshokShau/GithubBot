@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"net/mail"
 	"net/url"
 	"regexp"
 	"strings"
@@ -130,6 +131,35 @@ func firstURL(values ...string) string {
 }
 
 var repositoryNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9_.-]+$`)
+var commitTrailerPattern = regexp.MustCompile(`^[A-Za-z0-9-]+:\s*.+$`)
+var githubNoreplyPattern = regexp.MustCompile(`(?i)^(?:[0-9]+\+)?([a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\[bot\])?)@users\.noreply\.github\.com$`)
+
+func parseCommitMessage(message string) (subject, description string, coauthors []*gh.CommitAuthor) {
+	subject, description, _ = strings.Cut(strings.TrimSpace(strings.ReplaceAll(message, "\r\n", "\n")), "\n")
+	description = strings.TrimSpace(description)
+	lines := strings.Split(description, "\n")
+	start := len(lines)
+	for start > 0 && commitTrailerPattern.MatchString(lines[start-1]) {
+		start--
+	}
+	if start == len(lines) || start > 0 && strings.TrimSpace(lines[start-1]) != "" {
+		return
+	}
+	kept := append([]string(nil), lines[:start]...)
+	for _, line := range lines[start:] {
+		key, value, _ := strings.Cut(line, ":")
+		if strings.EqualFold(key, "Co-authored-by") {
+			address, err := mail.ParseAddress(strings.TrimSpace(value))
+			if err == nil && address.Name != "" && strings.HasSuffix(strings.TrimSpace(value), ">") {
+				coauthors = append(coauthors, &gh.CommitAuthor{Name: gh.Ptr(address.Name), Email: gh.Ptr(address.Address)})
+				continue
+			}
+		}
+		kept = append(kept, line)
+	}
+	description = strings.TrimSpace(strings.Join(kept, "\n"))
+	return
+}
 
 func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.ReplyMarkupInlineKeyboard) {
 	spec, ok := eventSpecs[name]
@@ -356,10 +386,10 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 		}
 		b.WriteString("</p>\n\n")
 		shown := min(len(commits), 5)
+		actorCredited := false
 		for _, commit := range commits[:shown] {
 			sha := cmp.Or(commit.GetID(), commit.GetSHA())
-			subject, description, _ := strings.Cut(strings.TrimSpace(strings.ReplaceAll(commit.GetMessage(), "\r\n", "\n")), "\n")
-			description = strings.TrimSpace(description)
+			subject, description, coauthors := parseCommitMessage(commit.GetMessage())
 			commitURL := firstURL(commit.GetURL())
 			if commitURL == "" && repoURL != "" && sha != "" {
 				commitURL = repoURL + "/commit/" + url.PathEscape(sha)
@@ -376,13 +406,53 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 			} else {
 				b.WriteString(html.EscapeString(utils.Clip(subject, 220)))
 			}
-			author := cmp.Or(commit.GetAuthor().GetLogin(), commit.GetAuthor().GetName())
-			if author != "" {
-				authorURL := ""
-				if commit.GetAuthor().GetLogin() != "" {
-					authorURL = "https://github.com/" + url.PathEscape(commit.GetAuthor().GetLogin())
+			var credits []string
+			seen := make(map[string]bool)
+			contributors := append([]*gh.CommitAuthor{commit.GetAuthor()}, coauthors...)
+			unique := 0
+			for i, contributor := range contributors {
+				login := contributor.GetLogin()
+				if login == "" {
+					if match := githubNoreplyPattern.FindStringSubmatch(contributor.GetEmail()); match != nil {
+						login = match[1]
+					}
 				}
-				b.WriteString(" by " + utils.Link(utils.Clip(author, 80), authorURL))
+				label := cmp.Or(contributor.GetName(), login)
+				if i == 0 {
+					label = cmp.Or(login, contributor.GetName())
+				}
+				if label == "" {
+					continue
+				}
+				emailKey, loginKey := "email:"+strings.ToLower(contributor.GetEmail()), "login:"+strings.ToLower(login)
+				if contributor.GetEmail() != "" && seen[emailKey] || login != "" && seen[loginKey] || contributor.GetEmail() == "" && login == "" && seen["name:"+strings.ToLower(label)] {
+					continue
+				}
+				seen[emailKey], seen[loginKey], seen["name:"+strings.ToLower(label)] = true, true, true
+				unique++
+				if len(credits) == 3 {
+					continue
+				}
+				authorURL := ""
+				if login != "" {
+					authorURL = "https://github.com/" + url.PathEscape(login)
+				}
+				limit := 40
+				if i == 0 {
+					limit = 80
+				}
+				credits = append(credits, utils.Link(utils.Clip(label, limit), authorURL))
+				actorCredited = actorCredited || actor != "" && (strings.EqualFold(actor, login) || login == "" && strings.EqualFold(actor, contributor.GetName()))
+			}
+			if len(credits) > 0 {
+				b.WriteString(" by " + strings.Join(credits, ", "))
+				if unique > len(credits) {
+					noun := "co-authors"
+					if unique-len(credits) == 1 {
+						noun = "co-author"
+					}
+					b.WriteString(fmt.Sprintf(" +%d %s", unique-len(credits), noun))
+				}
 			}
 			b.WriteString("</p>\n")
 			if description != "" {
@@ -398,7 +468,7 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 			}
 			b.WriteString(fmt.Sprintf("<p>… %d more %s.</p>\n", remaining, noun))
 		}
-		if actor != "" && (len(commits) != 1 || (commits[0].GetAuthor().GetLogin() != actor && commits[0].GetAuthor().GetName() != actor)) {
+		if actor != "" && !actorCredited {
 			if len(commits) > 0 || count > 0 && !push.GetDeleted() {
 				b.WriteByte('\n')
 			}
