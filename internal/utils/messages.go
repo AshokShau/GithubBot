@@ -169,9 +169,13 @@ func ErrorDetails(err error) string {
 	var telegramError *gotdbot.Error
 	if errors.As(err, &telegramError) {
 		details := fmt.Sprintf("error_type=%T telegram_code=%d", err, telegramError.Code)
+		if telegramError.Code == 406 {
+			return details
+		}
 		if retryAfter := telegramError.GetRetryAfter(); retryAfter > 0 {
 			details += fmt.Sprintf(" retry_after_seconds=%d", retryAfter)
 		}
+		details += fmt.Sprintf(" telegram_message=%q", telegramError.Message)
 		return details
 	}
 	if errors.Is(err, gotdbot.SendTimeout) {
