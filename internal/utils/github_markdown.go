@@ -33,6 +33,7 @@ func GitHubMarkdown(source, repositoryURL string) string {
 	}
 	var out strings.Builder
 	var fence string
+	var fencePrefix string
 	anchorDepth := 0
 	var anchors []bool
 	for i := 0; i < len(source); {
@@ -55,6 +56,12 @@ func GitHubMarkdown(source, repositoryURL string) string {
 			}
 			if len(marker) > 0 {
 				fence = marker[1]
+				fencePrefix = strings.Map(func(r rune) rune {
+					if r == '>' || unicode.IsSpace(r) {
+						return r
+					}
+					return ' '
+				}, line[:strings.Index(line, fence)])
 				out.WriteString(line)
 				i = end
 				continue
@@ -118,6 +125,7 @@ func GitHubMarkdown(source, repositoryURL string) string {
 				} else {
 					if (tag == "pre" || tag == "code") && typeOf == xhtml.StartTagToken {
 						end := i + len(raw)
+						open := []string{tag}
 						for {
 							kind := z.Next()
 							end += len(z.Raw())
@@ -125,13 +133,22 @@ func GitHubMarkdown(source, repositoryURL string) string {
 								end = len(source)
 								break
 							}
-							if kind == xhtml.EndTagToken && z.Token().Data == tag {
-								break
+							name := z.Token().Data
+							if kind == xhtml.StartTagToken && (name == "pre" || name == "code") {
+								open = append(open, name)
+							} else if kind == xhtml.EndTagToken && name == open[len(open)-1] {
+								open = open[:len(open)-1]
+								if len(open) == 0 {
+									break
+								}
 							}
 						}
 						out.WriteString(htmlNamedEntity.ReplaceAllStringFunc(source[i:end], func(entity string) string {
 							return html.EscapeString(html.UnescapeString(entity))
 						}))
+						for index := len(open) - 1; index >= 0; index-- {
+							out.WriteString("</" + open[index] + ">")
+						}
 						i = end
 						continue
 					}
@@ -244,6 +261,12 @@ func GitHubMarkdown(source, repositoryURL string) string {
 		}
 		out.WriteByte(source[i])
 		i++
+	}
+	if fence != "" {
+		if !strings.HasSuffix(source, "\n") {
+			out.WriteByte('\n')
+		}
+		out.WriteString(fencePrefix + fence + "\n")
 	}
 	return out.String()
 }

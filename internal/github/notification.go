@@ -394,18 +394,14 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 			if commitURL == "" && repoURL != "" && sha != "" {
 				commitURL = repoURL + "/commit/" + url.PathEscape(sha)
 			}
-			b.WriteString("<p>- ")
+			b.WriteString("\\- ")
 			if sha != "" {
 				b.WriteString(utils.Link(utils.ShortSHA(sha), commitURL))
 				if subject != "" {
 					b.WriteString(": ")
 				}
 			}
-			if description != "" {
-				b.WriteString("<b>" + html.EscapeString(utils.Clip(subject, 220)) + "</b>")
-			} else {
-				b.WriteString(html.EscapeString(utils.Clip(subject, 220)))
-			}
+			b.WriteString("<b>" + utils.GitHubMarkdown(utils.Clip(subject, 220), repoURL) + "</b>")
 			var credits []string
 			seen := make(map[string]bool)
 			contributors := append([]*gh.CommitAuthor{commit.GetAuthor()}, coauthors...)
@@ -441,7 +437,10 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 				if i == 0 {
 					limit = 80
 				}
-				credits = append(credits, utils.Link(utils.Clip(label, limit), authorURL))
+				label = (&gotdbot.FormattedText{Text: utils.Clip(label, limit)}).Format("MarkdownV2")
+				// Link escapes > as an HTML entity; other Markdown punctuation stays escaped.
+				label = strings.ReplaceAll(label, "\\>", ">")
+				credits = append(credits, utils.Link(label, authorURL))
 				actorCredited = actorCredited || actor != "" && (strings.EqualFold(actor, login) || login == "" && strings.EqualFold(actor, contributor.GetName()))
 			}
 			if len(credits) > 0 {
@@ -454,11 +453,11 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 					b.WriteString(fmt.Sprintf(" +%d %s", unique-len(credits), noun))
 				}
 			}
-			b.WriteString("</p>\n")
+			b.WriteString("\n\n")
 			if description != "" {
-				b.WriteString("<details><summary><sup>ᴅᴇꜱᴄʀɪᴘᴛɪᴏɴ</sup></summary>\n<p>" +
-					strings.ReplaceAll(html.EscapeString(utils.Clip(description, 1000/shown)), "\n", "<br>") +
-					"</p></details>\n\n")
+				b.WriteString("<details><summary><sup>ᴅᴇꜱᴄʀɪᴘᴛɪᴏɴ</sup></summary>\n\n" +
+					utils.GitHubMarkdown(utils.Clip(description, 1000/shown), repoURL) +
+					"\n\n</details>\n\n")
 			}
 		}
 		if remaining := count - shown; remaining > 0 && !push.GetDeleted() {
@@ -553,7 +552,9 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 		header = "<p>" + strings.ReplaceAll(header, "\n", "<br>") + "</p>"
 	}
 	message := &gotdbot.InputRichMessage{Source: &gotdbot.RichMessageSourceHtml{Text: header}}
-	if strings.TrimSpace(excerpt) != "" {
+	if name == "push" {
+		message.Source = &gotdbot.RichMessageSourceMarkdown{Text: header}
+	} else if strings.TrimSpace(excerpt) != "" {
 		message.Source = &gotdbot.RichMessageSourceMarkdown{Text: header + "\n\n" + utils.GitHubMarkdown(utils.Clip(excerpt, 8000), repoURL)}
 	}
 
