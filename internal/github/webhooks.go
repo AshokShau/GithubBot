@@ -4,14 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
 	"net/http"
-	"net/url"
-	"regexp"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github-webhook/internal/cache"
@@ -25,13 +26,17 @@ import (
 )
 
 type WebhookServer struct {
-	Config        *config.Config
-	DB            *db.DB
-	Bot           *gotdbot.Client
-	ClientFactory *ClientFactory
-	ContextCache  *cache.Cache[string, models.MessageContext]  // Key: "chat_id:message_id"
-	ActionCache   *cache.Cache[string, models.PRActionContext] // Key: UUID
-	AdminCache    *cache.Cache[int64, []int64]
+	deliveryMu      sync.Mutex
+	deliveries      map[string]deliveryEntry
+	lastUnsupported time.Time
+	lastMalformed   time.Time
+	Config          *config.Config
+	DB              *db.DB
+	Bot             *gotdbot.Client
+	ClientFactory   *ClientFactory
+	ContextCache    *cache.Cache[string, models.MessageContext]  // Key: "chat_id:message_id"
+	ActionCache     *cache.Cache[string, models.PRActionContext] // Key: UUID
+	AdminCache      *cache.Cache[int64, []int64]
 }
 
 func NewWebhookServer(cfg *config.Config, database *db.DB, bot *gotdbot.Client, factory *ClientFactory, ctxCache *cache.Cache[string, models.MessageContext], actionCache *cache.Cache[string, models.PRActionContext], adminCache *cache.Cache[int64, []int64]) *WebhookServer {
@@ -46,215 +51,256 @@ func NewWebhookServer(cfg *config.Config, database *db.DB, bot *gotdbot.Client, 
 	}
 }
 
+// Handler validates before processing and acknowledges only completed delivery.
+// Successful delivery IDs are remembered per destination for 24 hours.
 func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
-	// Path: /webhook/<token>
-	var chatID int64
-	var topicID int32
-
-	path := r.URL.Path
-	if strings.HasPrefix(path, "/webhook/") && len(path) > 9 {
-		token := path[9:] // strip "/webhook/"
-		decrypted, err := utils.Decrypt(token, s.Config.EncryptionKey)
-		if err == nil {
-			if strings.Contains(decrypted, ":") {
-				parts := strings.Split(decrypted, ":")
-				if len(parts) == 2 {
-					chatID, _ = strconv.ParseInt(parts[0], 10, 64)
-					topicID64, _ := strconv.ParseInt(parts[1], 10, 32)
-					topicID = int32(topicID64)
-				}
-			} else {
-				chatID, _ = strconv.ParseInt(decrypted, 10, 64)
-			}
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		http.Error(w, "Use POST for webhook deliveries.", http.StatusMethodNotAllowed)
+		return
+	}
+	token := strings.TrimPrefix(r.URL.Path, "/webhook/")
+	decrypted, err := utils.Decrypt(token, s.Config.EncryptionKey)
+	if err != nil {
+		http.Error(w, "Invalid webhook token.", http.StatusUnauthorized)
+		return
+	}
+	parts := strings.Split(decrypted, ":")
+	chatID, err := strconv.ParseInt(parts[0], 10, 64)
+	var topicID int64
+	if len(parts) > 2 || err != nil || chatID == 0 {
+		http.Error(w, "Invalid webhook destination.", http.StatusUnauthorized)
+		return
+	}
+	if len(parts) == 2 {
+		topicID, err = strconv.ParseInt(parts[1], 10, 32)
+		if err != nil || topicID < 0 {
+			http.Error(w, "Invalid webhook topic.", http.StatusUnauthorized)
+			return
+		}
+	}
+	mediaType, _, mediaErr := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if mediaErr != nil || (mediaType != "application/json" && mediaType != "application/x-www-form-urlencoded") {
+		http.Error(w, "Use JSON or form-encoded webhook payloads.", http.StatusUnsupportedMediaType)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 25<<20)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
+			http.Error(w, "Webhook payload is too large.", http.StatusRequestEntityTooLarge)
 		} else {
-			s.Bot.Logger.Warnf("Failed to decrypt webhook token: %v", err)
+			http.Error(w, "Could not read the webhook payload.", http.StatusBadRequest)
 		}
-	}
-
-	if chatID == 0 {
-		s.Bot.Logger.Warnf("Error: Valid webhook token required.")
-		http.Error(w, "Unauthorized: Token required", http.StatusUnauthorized)
 		return
 	}
-
-	if s.Config.GitHubWebhookSecret == "" {
-		s.Bot.Logger.Warnf("Warning: GITHUB_WEBHOOK_SECRET is not set in bot configuration")
+	signature := r.Header.Get(github.SHA256SignatureHeader)
+	if signature == "" {
+		signature = r.Header.Get(github.SHA1SignatureHeader)
 	}
-
-	var hookID int64
-	if idStr := r.Header.Get("X-GitHub-Hook-ID"); idStr != "" {
-		hookID, _ = strconv.ParseInt(idStr, 10, 64)
+	err = github.ValidateSignature(signature, body, []byte(s.Config.GitHubWebhookSecret))
+	if err != nil {
+		reason := "invalid_signature"
+		recovery := "The webhook signature header is malformed. Check that your proxy forwards GitHub's original signing headers."
+		switch err.Error() {
+		case "missing signature":
+			reason = "missing_signature"
+			recovery = "No webhook signature was received. Set the GitHub webhook Secret to the running bot's GITHUB_WEBHOOK_SECRET and ensure your proxy forwards X-Hub-Signature-256."
+		case "payload signature check failed":
+			reason = "signature_mismatch"
+			recovery = "Webhook signature mismatch. Set the GitHub webhook Secret to the running bot's GITHUB_WEBHOOK_SECRET and ensure your proxy preserves the original request body."
+		}
+		s.logMalformed(fmt.Sprintf("Webhook rejected reason=%s response_status=401 chat_id=%d topic_id=%d delivery_id=%q: %s", reason, chatID, topicID, utils.Clip(github.DeliveryID(r), 100), recovery), nil)
+		http.Error(w, recovery, http.StatusUnauthorized)
+		return
 	}
-	eventType := r.Header.Get("X-GitHub-Event")
+	payloadBytes, err := github.ValidatePayloadFromBody(mediaType, bytes.NewReader(body), "", nil)
+	if err != nil {
+		s.logMalformed("Invalid webhook body encoding response_status=400", err)
+		http.Error(w, "Invalid webhook body encoding. Use application/json or a form with a valid payload field.", http.StatusBadRequest)
+		return
+	}
+	var raw map[string]json.RawMessage
+	if jsonErr := json.Unmarshal(payloadBytes, &raw); jsonErr != nil || raw == nil {
+		s.logMalformed("Decode webhook JSON", jsonErr)
+		http.Error(w, "Expected a JSON webhook object.", http.StatusBadRequest)
+		return
+	}
+	eventType := github.WebHookType(r)
+	if eventType == "" {
+		http.Error(w, "Missing webhook event type.", http.StatusBadRequest)
+		return
+	}
+	if _, ok := eventSpecs[eventType]; !ok {
+		s.logUnsupported(eventType)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	event, err := github.ParseWebHook(eventType, payloadBytes)
+	if err != nil {
+		s.logMalformed("Parse webhook "+eventType, err)
+		http.Error(w, "Invalid webhook payload.", http.StatusBadRequest)
+		return
+	}
+	var action string
+	_ = json.Unmarshal(raw["action"], &action)
+	if !knownAction(eventType, action) {
+		s.logUnsupported(eventType + ":unsupported_action")
+	}
+	// Resource-bearing events need their primary object. Optional subfields may be absent.
+	if resource := eventSpecs[eventType].resource; resource != "" {
+		if v, ok := raw[resource]; !ok || string(v) == "null" {
+			s.logMalformed("Missing webhook resource for "+eventType, nil)
+			http.Error(w, "Missing webhook resource.", http.StatusBadRequest)
+			return
+		}
+	}
+	hookID, _ := strconv.ParseInt(r.Header.Get("X-GitHub-Hook-ID"), 10, 64)
 	deliveryID := r.Header.Get("X-GitHub-Delivery")
-
-	bodyBytes, _ := io.ReadAll(r.Body)
-	r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-
-	payload, err := github.ValidatePayload(r, []byte(s.Config.GitHubWebhookSecret))
+	deliveryLogger := s.Bot.Logger.With("event", eventType, "chat_id", chatID, "topic_id", topicID, "hook_id", hookID, "delivery_id", fmt.Sprintf("%q", utils.Clip(deliveryID, 100)))
+	key := fmt.Sprintf("%d:%d:%d:%s", chatID, topicID, hookID, deliveryID)
+	if deliveryID != "" {
+		state := s.beginDelivery(key)
+		if state == deliveryDone {
+			deliveryLogger.Info("Webhook skipped: notification already sent", "result", "duplicate")
+			w.Header().Set("X-Webhook-Result", "duplicate")
+			_, _ = fmt.Fprintln(w, "Duplicate delivery: this notification was already sent.")
+			return
+		}
+		if state == deliveryBusy {
+			deliveryLogger.Info("Webhook already processing", "result", "busy")
+			w.Header().Set("X-Webhook-Result", "busy")
+			http.Error(w, "Delivery is already processing. Retry later.", http.StatusServiceUnavailable)
+			return
+		}
+	}
+	deliveryLogger.Info("Webhook processing started")
+	sentMsg, err := s.processEvent(event, eventType, payloadBytes, chatID, int32(topicID), hookID)
+	if deliveryID != "" {
+		// Muted deliveries remain eligible for explicit redelivery after /unmute.
+		s.finishDelivery(key, err == nil && sentMsg != nil)
+	}
 	if err != nil {
-		repoFullName := extractRepoFullNameFromBody(r, bodyBytes)
-		s.Bot.Logger.Infof("Error: Webhook signature validation failed for chat %d (topic %d, hookID %d, repo %q, event %s, delivery %s). Ensure GITHUB_WEBHOOK_SECRET matches. Error: %v",
-			chatID, topicID, hookID, repoFullName, eventType, deliveryID, err)
-
-		go s.cleanupInvalidWebhook(chatID, hookID, repoFullName)
-
-		http.Error(w, "Webhook signature validation failed. The secret configured in your GitHub repository webhook settings does not match the GITHUB_WEBHOOK_SECRET configured on the bot server.", http.StatusUnauthorized)
+		deliveryLogger.Warnf("Webhook processing failed: %s", utils.ErrorDetails(err))
+		w.Header().Set("X-Webhook-Result", "failed")
+		http.Error(w, "Webhook processing failed. Redeliver this event after resolving the delivery problem.", http.StatusBadGateway)
 		return
 	}
+	if sentMsg == nil {
+		deliveryLogger.Info("Webhook skipped: notifications are muted; use /unmute in this chat/topic", "result", "muted")
+		w.Header().Set("X-Webhook-Result", "muted")
+		_, _ = fmt.Fprintf(w, "Notifications are muted for Telegram chat %d, topic %d. Use /unmute there to resume notifications.\n", chatID, topicID)
+		return
+	}
+	deliveryLogger.Info("Webhook notification sent", "result", "sent", "message_id", sentMsg.Id, "telegram_chat_id", sentMsg.ChatId)
+	w.Header().Set("X-Webhook-Result", "sent")
+	_, _ = fmt.Fprintf(w, "Notification sent to Telegram chat %d, topic %d (message %d).\n", sentMsg.ChatId, topicID, sentMsg.Id)
+}
 
-	event, err := github.ParseWebHook(github.WebHookType(r), payload)
+const (
+	deliveryNew = iota
+	deliveryBusy
+	deliveryDone
+)
+
+type deliveryEntry struct {
+	done    bool
+	expires time.Time
+}
+
+func (s *WebhookServer) beginDelivery(key string) int {
+	s.deliveryMu.Lock()
+	defer s.deliveryMu.Unlock()
+	if s.deliveries == nil {
+		s.deliveries = map[string]deliveryEntry{}
+	}
+	now := time.Now()
+	for k, v := range s.deliveries {
+		if now.After(v.expires) {
+			delete(s.deliveries, k)
+		}
+	}
+	if v, ok := s.deliveries[key]; ok {
+		if v.done {
+			return deliveryDone
+		}
+		return deliveryBusy
+	}
+	// Bound memory; eviction permits a retry to notify again under extreme load.
+	if len(s.deliveries) >= 10000 {
+		for k, v := range s.deliveries {
+			if v.done {
+				delete(s.deliveries, k)
+				break
+			}
+		}
+	}
+	if len(s.deliveries) >= 10000 {
+		return deliveryBusy
+	}
+	s.deliveries[key] = deliveryEntry{expires: now.Add(24 * time.Hour)}
+	return deliveryNew
+}
+func (s *WebhookServer) finishDelivery(key string, success bool) {
+	s.deliveryMu.Lock()
+	defer s.deliveryMu.Unlock()
+	if !success {
+		delete(s.deliveries, key)
+		return
+	}
+	s.deliveries[key] = deliveryEntry{done: true, expires: time.Now().Add(24 * time.Hour)}
+}
+func (s *WebhookServer) logUnsupported(name string) {
+	s.deliveryMu.Lock()
+	defer s.deliveryMu.Unlock()
+	if time.Since(s.lastUnsupported) < time.Minute {
+		return
+	}
+	s.lastUnsupported = time.Now()
+	// Header values are untrusted; quote and bound them to prevent log injection.
+	s.Bot.Logger.Warnf("unsupported_webhook_event=%q", utils.Clip(name, 80))
+}
+
+func (s *WebhookServer) logMalformed(stage string, err error) {
+	s.deliveryMu.Lock()
+	if time.Since(s.lastMalformed) < time.Minute {
+		s.deliveryMu.Unlock()
+		return
+	}
+	s.lastMalformed = time.Now()
+	s.deliveryMu.Unlock()
 	if err != nil {
-		s.Bot.Logger.Warnf("Error: Webhook parsing failed: %v", err)
-		http.Error(w, "Parse error", http.StatusInternalServerError)
-		return
+		stage += ": " + utils.ErrorDetails(err)
 	}
-
-	go s.processEvent(event, chatID, topicID, hookID)
-	w.WriteHeader(http.StatusOK)
+	s.Bot.Logger.Warnf("%s", stage)
 }
 
-func extractRepoFullNameFromBody(r *http.Request, body []byte) string {
-	if len(body) == 0 {
-		return ""
-	}
-	contentType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	var payload []byte
-	if contentType == "application/x-www-form-urlencoded" {
-		if form, err := url.ParseQuery(string(body)); err == nil {
-			payload = []byte(form.Get("payload"))
+func (s *WebhookServer) processEvent(event any, eventType string, payloadBytes []byte, chatID int64, topicID int32, hookID int64) (*gotdbot.Message, error) {
+	if s.DB != nil {
+		chat, err := s.DB.GetChat(context.Background(), chatID)
+		if err != nil {
+			return nil, err
 		}
-	} else {
-		payload = body
-	}
-	return extractRepoFullName(payload)
-}
-
-func extractRepoFullName(payload []byte) string {
-	if len(payload) == 0 {
-		return ""
-	}
-	var raw struct {
-		Repository struct {
-			FullName string `json:"full_name"`
-		} `json:"repository"`
-	}
-	if err := json.Unmarshal(payload, &raw); err == nil && raw.Repository.FullName != "" {
-		return raw.Repository.FullName
-	}
-	return ""
-}
-
-func (s *WebhookServer) cleanupInvalidWebhook(chatID int64, hookID int64, payloadRepo string) {
-	if s.DB == nil || s.Bot == nil || s.ClientFactory == nil {
-		return
-	}
-
-	ctx := context.Background()
-
-	links, err := s.DB.GetChatLinks(ctx, chatID)
-	if err != nil || len(links) == 0 {
-		return
-	}
-
-	var targetLinks []models.RepoLink
-	for _, l := range links {
-		if (hookID != 0 && l.WebhookID == hookID) || (payloadRepo != "" && strings.EqualFold(l.RepoFullName, payloadRepo)) {
-			targetLinks = append(targetLinks, l)
+		if chat != nil && slices.Contains(chat.MutedThreads, int64(topicID)) {
+			return nil, nil
 		}
 	}
-
-	if len(targetLinks) == 0 {
-		s.Bot.Logger.Infof("Webhook cleanup: No matching repo link found in DB for chat %d (hookID: %d, repo: %q)", chatID, hookID, payloadRepo)
-		return
-	}
-
-	var client *github.Client
-	var targetUserIDs []int64
-
-	if s.AdminCache != nil {
-		if cachedAdmins, ok := s.AdminCache.Get(chatID); ok {
-			targetUserIDs = append(targetUserIDs, cachedAdmins...)
-		}
-	}
-
-	if len(targetUserIDs) == 0 {
-		admins, aErr := s.Bot.GetChatAdministrators(chatID)
-		if aErr == nil && admins != nil {
-			for _, admin := range admins.Administrators {
-				targetUserIDs = append(targetUserIDs, admin.UserId)
+	if repositoryEvent, ok := event.(*github.RepositoryEvent); ok && repositoryEvent.GetAction() == "renamed" && hookID != 0 && s.DB != nil {
+		newName := repositoryEvent.GetRepo().GetFullName()
+		if newName != "" {
+			if err := s.DB.UpdateRepoLinkName(context.Background(), chatID, hookID, newName); err != nil {
+				return nil, err
 			}
-			if s.AdminCache != nil {
-				s.AdminCache.Set(chatID, targetUserIDs, 1*time.Hour)
-			}
+			s.Bot.Logger.Infof("repository_link_renamed chat_id=%d", chatID)
 		}
 	}
-	targetUserIDs = append(targetUserIDs, chatID)
+	msg, markup := formatEvent(eventType, payloadBytes)
 
-	for _, uid := range targetUserIDs {
-		user, uErr := s.DB.GetUserByTelegramID(ctx, uid)
-		if uErr == nil && user != nil && user.EncryptedOAuthToken != "" {
-			token, decErr := utils.Decrypt(user.EncryptedOAuthToken, s.Config.EncryptionKey)
-			if decErr == nil && token != "" {
-				if ghClient, cErr := s.ClientFactory.GetUserClient(ctx, token); cErr == nil {
-					client = ghClient
-					break
-				}
-			}
-		}
+	if msg == nil {
+		return nil, fmt.Errorf("event has no formatter")
 	}
 
-	if client == nil {
-		s.Bot.Logger.Infof("Webhook cleanup: No authorized GitHub client found for chat %d to delete webhook", chatID)
-		return
-	}
-
-	for _, link := range targetLinks {
-		repoName := link.RepoFullName
-		parts := strings.Split(repoName, "/")
-		if len(parts) == 2 {
-			owner, repo := parts[0], parts[1]
-			hid := link.WebhookID
-			if hid == 0 {
-				hid = hookID
-			}
-			if hid != 0 {
-				s.Bot.Logger.Infof("Attempting to delete invalid webhook ID %d for %s on GitHub...", hid, repoName)
-				_, dErr := client.Repositories.DeleteHook(ctx, owner, repo, hid)
-				if dErr != nil {
-					s.Bot.Logger.Warnf("Webhook deletion via GitHub API failed for %s (hookID %d): %v", repoName, hid, dErr)
-				} else {
-					s.Bot.Logger.Infof("Successfully deleted invalid webhook ID %d for %s on GitHub", hid, repoName)
-				}
-			}
-		}
-	}
-}
-
-func (s *WebhookServer) processEvent(event any, chatID int64, topicID int32, hookID int64) {
-	if e, ok := event.(*github.RepositoryEvent); ok && e.GetAction() == "renamed" {
-		newFullName := e.GetRepo().GetFullName()
-		if newFullName != "" && hookID != 0 {
-			err := s.DB.UpdateRepoLinkName(context.Background(), chatID, hookID, newFullName)
-			if err != nil {
-				s.Bot.Logger.Warnf("Failed to update repo name for chat %d: %v", chatID, err)
-			} else {
-				s.Bot.Logger.Infof("Updated repo name to %s for chat %d", newFullName, chatID)
-			}
-		}
-	}
-
-	msg, markup := s.formatMessage(event)
-	if msg == "" {
-		return
-	}
-
-	msg = normalizeMessage(msg)
-
-	opts := &gotdbot.SendTextMessageOpts{
-		ParseMode:             gotdbot.ParseModeMarkdownV2,
-		DisableWebPagePreview: true,
-	}
+	opts := &gotdbot.SendMessageOpts{}
 
 	if topicID != 0 {
 		opts.TopicId = &gotdbot.MessageTopicForum{ForumTopicId: topicID}
@@ -264,224 +310,21 @@ func (s *WebhookServer) processEvent(event any, chatID int64, topicID int32, hoo
 		opts.ReplyMarkup = markup
 	}
 
-	sentMsg, err := s.Bot.SendTextMessage(chatID, msg, opts)
+	if s.Bot == nil {
+		return nil, fmt.Errorf("Telegram client is unavailable")
+	}
+	sentMsg, err := s.Bot.SendRichMessage(chatID, msg, opts)
 	if err != nil {
-		s.Bot.Logger.Warnf("Error sending message to chat %d: %v", chatID, err)
-		return
+		return nil, err
+	}
+	if sentMsg == nil || sentMsg.Id == 0 {
+		return nil, fmt.Errorf("Telegram did not return a sent message")
 	}
 
-	s.storeMessageContext(sentMsg.Id, chatID, event)
-}
-
-// normalizeMessage trims trailing spaces on each line, collapses 3+ consecutive newlines into 2
-func normalizeMessage(s string) string {
-	if s == "" {
-		return s
+	if s.ContextCache != nil {
+		if ctx, ok := messageContext(event); ok {
+			s.ContextCache.Set(fmt.Sprintf("%d:%d", chatID, sentMsg.Id), ctx, 48*time.Hour)
+		}
 	}
-
-	lines := strings.Split(s, "\n")
-	for i, ln := range lines {
-		lines[i] = strings.TrimRight(ln, " \t")
-	}
-	out := strings.Join(lines, "\n")
-
-	re := regexp.MustCompile(`\n{3,}`)
-	out = re.ReplaceAllString(out, "\n\n")
-
-	out = strings.TrimSpace(out)
-	return out
-}
-
-func (s *WebhookServer) storeMessageContext(messageID int64, chatID int64, event any) {
-	key := fmt.Sprintf("%d:%d", chatID, messageID)
-	var ctx models.MessageContext
-
-	switch e := event.(type) {
-	case *github.PullRequestEvent:
-		ctx = models.MessageContext{
-			Owner:       e.GetRepo().GetOwner().GetLogin(),
-			Repo:        e.GetRepo().GetName(),
-			IssueNumber: e.GetPullRequest().GetNumber(),
-			Type:        "pr",
-		}
-	case *github.IssuesEvent:
-		ctx = models.MessageContext{
-			Owner:       e.GetRepo().GetOwner().GetLogin(),
-			Repo:        e.GetRepo().GetName(),
-			IssueNumber: e.GetIssue().GetNumber(),
-			Type:        "issue",
-		}
-	case *github.IssueCommentEvent:
-		ctx = models.MessageContext{
-			Owner:       e.GetRepo().GetOwner().GetLogin(),
-			Repo:        e.GetRepo().GetName(),
-			IssueNumber: e.GetIssue().GetNumber(),
-			CommentID:   e.GetComment().GetID(),
-			Type:        "issue_comment",
-		}
-	case *github.PullRequestReviewEvent:
-		ctx = models.MessageContext{
-			Owner:       e.GetRepo().GetOwner().GetLogin(),
-			Repo:        e.GetRepo().GetName(),
-			IssueNumber: e.GetPullRequest().GetNumber(),
-			Type:        "pr_review",
-		}
-	case *github.PullRequestReviewCommentEvent:
-		ctx = models.MessageContext{
-			Owner:       e.GetRepo().GetOwner().GetLogin(),
-			Repo:        e.GetRepo().GetName(),
-			IssueNumber: e.GetPullRequest().GetNumber(),
-			CommentID:   e.GetComment().GetID(),
-			Type:        "pr_review_comment",
-		}
-	default:
-		return
-	}
-
-	s.ContextCache.Set(key, ctx, 48*time.Hour)
-}
-
-func (s *WebhookServer) formatMessage(event any) (string, *gotdbot.ReplyMarkupInlineKeyboard) {
-	switch e := event.(type) {
-	case *github.PushEvent:
-		return FormatPushEvent(e)
-	case *github.PullRequestEvent:
-		return FormatPullRequestEvent(e)
-	case *github.IssuesEvent:
-		return FormatIssuesEvent(e)
-	case *github.PingEvent:
-		return FormatPingEvent(e)
-	case *github.PullRequestReviewEvent:
-		return FormatPullRequestReviewEvent(e)
-	case *github.PullRequestReviewCommentEvent:
-		return FormatPullRequestReviewCommentEvent(e)
-	case *github.RepositoryEvent:
-		return FormatRepositoryEvent(e)
-	case *github.RepositoryDispatchEvent:
-		return FormatRepositoryDispatchEvent(e)
-	case *github.OrganizationEvent:
-		return FormatOrganizationEvent(e)
-	case *github.OrgBlockEvent:
-		return FormatOrgBlockEvent(e)
-	case *github.CheckRunEvent:
-		return FormatCheckRunEvent(e)
-	case *github.CheckSuiteEvent:
-		return FormatCheckSuiteEvent(e)
-	case *github.WorkflowRunEvent:
-		return FormatWorkflowRunEvent(e)
-	case *github.WorkflowJobEvent:
-		return FormatWorkflowJobEvent(e)
-	case *github.DeploymentEvent:
-		return FormatDeploymentEvent(e)
-	case *github.DeploymentStatusEvent:
-		return FormatDeploymentStatusEvent(e)
-	case *github.SecurityAdvisoryEvent:
-		return FormatSecurityAdvisoryEvent(e)
-	case *github.RepositoryVulnerabilityAlertEvent:
-		return FormatRepositoryVulnerabilityAlertEvent(e)
-	case *github.BranchProtectionRuleEvent:
-		return FormatBranchProtectionRuleEvent(e)
-	case *github.BranchProtectionConfigurationEvent:
-		return FormatBranchProtectionConfigurationEvent(e)
-	case *github.ContentReferenceEvent:
-		return FormatContentReferenceEvent(e)
-	case *github.CustomPropertyEvent:
-		return FormatCustomPropertyEvent(e)
-	case *github.CustomPropertyValuesEvent:
-		return FormatCustomPropertyValuesEvent(e)
-	case *github.DependabotAlertEvent:
-		return FormatDependabotAlertEvent(e)
-	case *github.DeploymentProtectionRuleEvent:
-		return FormatDeploymentProtectionRuleEvent(e)
-	case *github.DeploymentReviewEvent:
-		return FormatDeploymentReviewEvent(e)
-	case *github.DiscussionCommentEvent:
-		return FormatDiscussionCommentEvent(e)
-	case *github.DiscussionEvent:
-		return FormatDiscussionEvent(e)
-	case *github.GitHubAppAuthorizationEvent:
-		return FormatGitHubAppAuthorizationEvent(e)
-	case *github.InstallationRepositoriesEvent:
-		return FormatInstallationRepositoriesEvent(e)
-	case *github.InstallationTargetEvent:
-		return FormatInstallationTargetEvent(e)
-	case *github.MergeGroupEvent:
-		return FormatMergeGroupEvent(e)
-	case *github.PersonalAccessTokenRequestEvent:
-		return FormatPersonalAccessTokenRequestEvent(e)
-	case *github.ProjectV2Event:
-		return FormatProjectV2Event(e)
-	case *github.ProjectV2ItemEvent:
-		return FormatProjectV2ItemEvent(e)
-	case *github.PullRequestReviewThreadEvent:
-		return FormatPullRequestReviewThreadEvent(e)
-	case *github.PullRequestTargetEvent:
-		return FormatPullRequestTargetEvent(e)
-	case *github.RegistryPackageEvent:
-		return FormatRegistryPackageEvent(e)
-	case *github.RepositoryImportEvent:
-		return FormatRepositoryImportEvent(e)
-	case *github.RepositoryRulesetEvent:
-		return FormatRepositoryRulesetEvent(e)
-	case *github.SecretScanningAlertEvent:
-		return FormatSecretScanningAlertEvent(e)
-	case *github.SecretScanningAlertLocationEvent:
-		return FormatSecretScanningAlertLocationEvent(e)
-	case *github.SecurityAndAnalysisEvent:
-		return FormatSecurityAndAnalysisEvent(e)
-	case *github.SponsorshipEvent:
-		return FormatSponsorshipEvent(e)
-	case *github.UserEvent:
-		return FormatUserEvent(e)
-	case *github.MembershipEvent:
-		return FormatMembershipEvent(e)
-	case *github.MilestoneEvent:
-		return FormatMilestoneEvent(e)
-	case *github.CommitCommentEvent:
-		return FormatCommitCommentEvent(e)
-	case *github.ForkEvent:
-		return FormatForkEvent(e)
-	case *github.ReleaseEvent:
-		return FormatReleaseEvent(e)
-	case *github.StarEvent:
-		return FormatStarEvent(e)
-	case *github.WatchEvent:
-		return FormatWatchEvent(e)
-	case *github.LabelEvent:
-		return FormatLabelEvent(e)
-	case *github.MarketplacePurchaseEvent:
-		return FormatMarketplacePurchaseEvent(e)
-	case *github.PageBuildEvent:
-		return FormatPageBuildEvent(e)
-	case *github.DeployKeyEvent:
-		return FormatDeployKeyEvent(e)
-	case *github.CreateEvent:
-		return FormatCreateEvent(e)
-	case *github.DeleteEvent:
-		return FormatDeleteEvent(e)
-	case *github.IssueCommentEvent:
-		return FormatIssueCommentEvent(e)
-	case *github.MemberEvent:
-		return FormatMemberEvent(e)
-	case *github.PublicEvent:
-		return FormatPublicEvent(e)
-	case *github.StatusEvent:
-		return FormatStatusEvent(e)
-	case *github.WorkflowDispatchEvent:
-		return FormatWorkflowDispatchEvent(e)
-	case *github.TeamAddEvent:
-		return FormatTeamAddEvent(e)
-	case *github.TeamEvent:
-		return FormatTeamEvent(e)
-	case *github.PackageEvent:
-		return FormatPackageEvent(e)
-	case *github.GollumEvent:
-		return FormatGollumEvent(e)
-	case *github.MetaEvent:
-		return FormatMetaEvent(e)
-	case *github.InstallationEvent:
-		return FormatInstallationEvent(e)
-	default:
-		return "", nil
-	}
+	return sentMsg, nil
 }

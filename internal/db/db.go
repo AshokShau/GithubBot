@@ -5,13 +5,11 @@ import (
 	"errors"
 	"time"
 
+	"github-webhook/internal/cache"
 	"github-webhook/internal/config"
 	"github-webhook/internal/models"
 
-	"github-webhook/internal/cache"
-
 	"go.mongodb.org/mongo-driver/v2/bson"
-
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
@@ -68,7 +66,20 @@ func (d *DB) createIndexes() error {
 func (d *DB) MuteThread(ctx context.Context, chatID int64, threadID int32) error {
 	filter := bson.M{"_id": chatID}
 	update := bson.M{"$addToSet": bson.M{"muted_threads": threadID}}
-	_, err := d.Chats.UpdateOne(ctx, filter, update)
+	result, err := d.Chats.UpdateOne(ctx, filter, update)
+	if err == nil && result.MatchedCount == 0 {
+		return errors.New("chat not found")
+	}
+	return err
+}
+
+func (d *DB) UnmuteThread(ctx context.Context, chatID int64, threadID int32) error {
+	filter := bson.M{"_id": chatID}
+	update := bson.M{"$pull": bson.M{"muted_threads": threadID}}
+	result, err := d.Chats.UpdateOne(ctx, filter, update)
+	if err == nil && result.MatchedCount == 0 {
+		return errors.New("chat not found")
+	}
 	return err
 }
 

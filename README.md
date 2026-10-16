@@ -214,7 +214,8 @@ OWNER_ID=123456789
 *   `/search <keyword>` - Search repository code.
 
 ### Notifications & Statistics
-*   `/mute` - Mute notifications for the current forum topic/thread.
+*   `/mute` - Mute notifications for the current chat or forum topic.
+*   `/unmute` - Resume notifications for the current chat or forum topic.
 *   `/done` - Mark corresponding GitHub notification as done (reply to notification).
 *   `/read` - Mark corresponding GitHub notification as read (reply to notification).
 *   `/stats` - Show repository summary statistics (stars, forks, open issues/PRs, contributors).

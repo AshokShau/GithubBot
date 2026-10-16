@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 
@@ -14,10 +15,9 @@ import (
 	"github-webhook/internal/models"
 	"github-webhook/internal/utils"
 
-	"net/http"
-
 	"github.com/AshokShau/gotdbot"
 	gh "github.com/google/go-github/v92/github"
+	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 
 type CallbackHandler struct {
@@ -52,8 +52,11 @@ func init() {
 }
 
 func (h *CallbackHandler) HandleSettings(c *gotdbot.Client, u *gotdbot.UpdateNewCallbackQuery) error {
+	if !validSettingsData(u.DataString()) {
+		return u.Answer(c, "This interaction is invalid or expired. Open /settings or /addrepo again.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
+	}
 	if !u.IsPrivate() && !utils.IsAdmin(c, u.ChatId, u.SenderUserId, h.AdminCache) {
-		_ = u.Answer(c, 0, true, "Only admins can change settings", "")
+		_ = u.Answer(c, "Telegram administrator access is required to change settings.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 
@@ -93,7 +96,7 @@ func (h *CallbackHandler) HandleSettings(c *gotdbot.Client, u *gotdbot.UpdateNew
 		repoName := parts[2]
 		link, err := h.DB.GetRepoLink(context.Background(), u.ChatId, repoName)
 		if err != nil {
-			_ = u.Answer(c, 0, false, "Repo not found", "")
+			_ = u.Answer(c, "Repository link unavailable. Open /settings again or use /addrepo.", &gotdbot.CallbackAnswerOpts{ShowAlert: false})
 			return nil
 		}
 
@@ -116,19 +119,22 @@ func (h *CallbackHandler) HandleSettings(c *gotdbot.Client, u *gotdbot.UpdateNew
 			}
 
 			user, uErr := h.DB.GetUserByTelegramID(context.Background(), u.SenderUserId)
-			if uErr != nil || user.EncryptedOAuthToken == "" {
-				_ = u.Answer(c, 0, true, "Please /connect to GitHub first.", "")
+			if uErr != nil || user == nil || user.EncryptedOAuthToken == "" {
+				if uErr != nil && !errors.Is(uErr, mongo.ErrNoDocuments) {
+					c.Logger.Warnf("Load GitHub connection: %s", utils.ErrorDetails(uErr))
+				}
+				_ = u.Answer(c, utils.ConnectionError(uErr), &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 				return nil
 			}
 			token, tErr := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
 			if tErr != nil {
-				_ = u.Answer(c, 0, true, "Auth error.", "")
+				_ = u.Answer(c, "GitHub authorization is unavailable. Use /connect to reconnect.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 				return nil
 			}
 
 			ghClient, err := h.ClientFactory.GetUserClient(context.Background(), token)
 			if err != nil {
-				_ = u.Answer(c, 0, true, "Failed to create GitHub client.", "")
+				_ = u.Answer(c, "GitHub is unavailable. Please try again later.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 				return nil
 			}
 			repoParts := strings.Split(link.RepoFullName, "/")
@@ -142,7 +148,8 @@ func (h *CallbackHandler) HandleSettings(c *gotdbot.Client, u *gotdbot.UpdateNew
 				if h.handleAuthError(c, u, hErr) {
 					return nil
 				}
-				_ = u.Answer(c, 0, true, "Failed to fetch GitHub settings.", "")
+				c.Logger.Warnf("Failed to fetch GitHub settings: %s", utils.ErrorDetails(hErr))
+				_ = u.Answer(c, utils.OperationError("Failed to fetch GitHub settings", hErr), &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 				return nil
 			}
 
@@ -176,12 +183,17 @@ func (h *CallbackHandler) HandleSettings(c *gotdbot.Client, u *gotdbot.UpdateNew
 			}
 
 			hook.Events = newEvents
+			if hook.Config == nil {
+				hook.Config = &gh.HookConfig{}
+			}
+			hook.Config.Secret = new(h.Config.GitHubWebhookSecret)
 			_, _, editErr := ghClient.Repositories.EditHook(context.Background(), owner, repoName, link.WebhookID, hook)
 			if editErr != nil {
 				if h.handleAuthError(c, u, editErr) {
 					return nil
 				}
-				_ = u.Answer(c, 0, true, "Failed to update GitHub.", "")
+				c.Logger.Warnf("Failed to update GitHub: %s", utils.ErrorDetails(editErr))
+				_ = u.Answer(c, utils.OperationError("Failed to update GitHub", editErr), &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 				return nil
 			}
 
@@ -212,21 +224,22 @@ func (h *CallbackHandler) showRepoMenu(c *gotdbot.Client, u *gotdbot.UpdateNewCa
 	kb := &gotdbot.ReplyMarkupInlineKeyboard{
 		Rows: [][]gotdbot.InlineKeyboardButton{
 			{
-				{Text: "Just the push event", Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:presets:%s:push", l.RepoFullName)}},
+				{Text: "Push only", Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:presets:%s:push", l.RepoFullName)}},
 			},
 			{
-				{Text: "Send me everything", Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:presets:%s:all", l.RepoFullName)}},
+				{Text: "All events", Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:presets:%s:all", l.RepoFullName)}},
 			},
 			{
-				{Text: "Let me select individual events", Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:iev:%s:1", l.RepoFullName)}},
+				{Text: "Choose events", Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:iev:%s:1", l.RepoFullName)}},
 			},
 			{
-				{Text: "🔙 Back to Repo List", Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: []byte("c:ls")}},
+				{Text: "Repositories", Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: []byte("c:ls")}},
 			},
 		},
 	}
 
-	_, err := u.EditMessageText(c, fmt.Sprintf("Configuration for <b>%s</b>:", l.RepoFullName), &gotdbot.EditTextMessageOpts{
+	_ = u.Answer(c, "", nil)
+	_, err := u.EditMessageText(c, "<b>Notification settings</b>\n"+utils.Code(l.RepoFullName)+"\n\nChoose a preset or select individual events.", &gotdbot.EditMessageTextOpts{
 		ReplyMarkup: kb,
 		ParseMode:   gotdbot.ParseModeHTML,
 	})
@@ -235,20 +248,23 @@ func (h *CallbackHandler) showRepoMenu(c *gotdbot.Client, u *gotdbot.UpdateNewCa
 
 func (h *CallbackHandler) handlePresets(c *gotdbot.Client, u *gotdbot.UpdateNewCallbackQuery, l *models.RepoLink, mode string) error {
 	user, uErr := h.DB.GetUserByTelegramID(context.Background(), u.SenderUserId)
-	if uErr != nil || user.EncryptedOAuthToken == "" {
-		_ = u.Answer(c, 0, true, "Please /connect to GitHub first.", "")
+	if uErr != nil || user == nil || user.EncryptedOAuthToken == "" {
+		if uErr != nil && !errors.Is(uErr, mongo.ErrNoDocuments) {
+			c.Logger.Warnf("Load GitHub connection: %s", utils.ErrorDetails(uErr))
+		}
+		_ = u.Answer(c, utils.ConnectionError(uErr), &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 
 	token, tErr := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
 	if tErr != nil {
-		_ = u.Answer(c, 0, true, "Auth error.", "")
+		_ = u.Answer(c, "GitHub authorization is unavailable. Use /connect to reconnect.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 
 	ghClient, err := h.ClientFactory.GetUserClient(context.Background(), token)
 	if err != nil {
-		_ = u.Answer(c, 0, true, "Failed to create GitHub client.", "")
+		_ = u.Answer(c, "GitHub is unavailable. Please try again later.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 	repoParts := strings.Split(l.RepoFullName, "/")
@@ -262,7 +278,8 @@ func (h *CallbackHandler) handlePresets(c *gotdbot.Client, u *gotdbot.UpdateNewC
 		if h.handleAuthError(c, u, hErr) {
 			return nil
 		}
-		_ = u.Answer(c, 0, true, "Failed to fetch GitHub hook.", "")
+		c.Logger.Warnf("Failed to fetch GitHub hook: %s", utils.ErrorDetails(hErr))
+		_ = u.Answer(c, utils.OperationError("Failed to fetch GitHub hook", hErr), &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 
@@ -276,27 +293,33 @@ func (h *CallbackHandler) handlePresets(c *gotdbot.Client, u *gotdbot.UpdateNewC
 	}
 
 	hook.Events = newEvents
+	if hook.Config == nil {
+		hook.Config = &gh.HookConfig{}
+	}
+	hook.Config.Secret = new(h.Config.GitHubWebhookSecret)
 	_, _, editErr := ghClient.Repositories.EditHook(context.Background(), owner, repoName, l.WebhookID, hook)
 	if editErr != nil {
 		if h.handleAuthError(c, u, editErr) {
 			return nil
 		}
-		_ = u.Answer(c, 0, true, "Failed to update GitHub hook.", "")
+		c.Logger.Warnf("Failed to update GitHub hook: %s", utils.ErrorDetails(editErr))
+		_ = u.Answer(c, utils.OperationError("Failed to update GitHub hook", editErr), &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 
-	responseText := "✅ <b>Success!</b> I've updated the repository settings to send <b>everything</b>."
+	responseText := "<b>Notifications updated</b>\n" + utils.Code(l.RepoFullName) + "\n\nAll GitHub events. Unsupported events are skipped."
 	if mode == "push" {
-		responseText = "✅ <b>Success!</b> I've updated the repository settings to send <b>push events only</b>."
+		responseText = "<b>Notifications updated</b>\n" + utils.Code(l.RepoFullName) + "\n\nPush events only."
 	}
 
 	kb := &gotdbot.ReplyMarkupInlineKeyboard{
 		Rows: [][]gotdbot.InlineKeyboardButton{
-			{{Text: "🔙 Back", Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:r:%s", l.RepoFullName)}}},
+			{{Text: "Back", Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:r:%s", l.RepoFullName)}}},
 		},
 	}
 
-	_, err = u.EditMessageText(c, responseText, &gotdbot.EditTextMessageOpts{
+	_ = u.Answer(c, "", nil)
+	_, err = u.EditMessageText(c, responseText, &gotdbot.EditMessageTextOpts{
 		ReplyMarkup: kb,
 		ParseMode:   gotdbot.ParseModeHTML,
 	})
@@ -305,20 +328,26 @@ func (h *CallbackHandler) handlePresets(c *gotdbot.Client, u *gotdbot.UpdateNewC
 
 func (h *CallbackHandler) showIndividualEvents(c *gotdbot.Client, u *gotdbot.UpdateNewCallbackQuery, l *models.RepoLink, page int) error {
 	user, err := h.DB.GetUserByTelegramID(context.Background(), u.SenderUserId)
-	if err != nil || user.EncryptedOAuthToken == "" {
-		_, _ = u.EditMessageText(c, "Error: You must be connected to GitHub to view/edit settings.", nil)
+	if err != nil || user == nil || user.EncryptedOAuthToken == "" {
+		_ = u.Answer(c, "", nil)
+		if err != nil && !errors.Is(err, mongo.ErrNoDocuments) {
+			c.Logger.Warnf("Load GitHub connection: %s", utils.ErrorDetails(err))
+		}
+		_, _ = u.EditMessageText(c, utils.ConnectionError(err), nil)
 		return nil
 	}
 
 	token, err := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
 	if err != nil {
-		_, _ = u.EditMessageText(c, "Auth error. Please reconnect.", nil)
+		_ = u.Answer(c, "", nil)
+		_, _ = u.EditMessageText(c, "GitHub authorization is unavailable. Use /connect to reconnect.", nil)
 		return nil
 	}
 
 	ghClient, err := h.ClientFactory.GetUserClient(context.Background(), token)
 	if err != nil {
-		_, _ = u.EditMessageText(c, "Failed to create GitHub client.", nil)
+		_ = u.Answer(c, "", nil)
+		_, _ = u.EditMessageText(c, "GitHub is unavailable. Please try again later.", nil)
 		return nil
 	}
 	parts := strings.Split(l.RepoFullName, "/")
@@ -332,7 +361,9 @@ func (h *CallbackHandler) showIndividualEvents(c *gotdbot.Client, u *gotdbot.Upd
 		if h.handleAuthError(c, u, err) {
 			return nil
 		}
-		_, _ = u.EditMessageText(c, "Error fetching webhook settings from GitHub. Check permissions.", nil)
+		_ = u.Answer(c, "", nil)
+		c.Logger.Warnf("Could not fetch webhook settings: %s", utils.ErrorDetails(err))
+		_, _ = u.EditMessageText(c, utils.OperationError("Could not fetch webhook settings", err), nil)
 		return nil
 	}
 
@@ -353,9 +384,9 @@ func (h *CallbackHandler) showIndividualEvents(c *gotdbot.Client, u *gotdbot.Upd
 	var row []gotdbot.InlineKeyboardButton
 
 	for _, e := range github.SupportedEvents {
-		status := "❌"
+		status := "Off"
 		if enabledEvents[e.Name] {
-			status = "✅"
+			status = "On"
 		}
 
 		cbData := fmt.Sprintf("c:te:%s:%s:%d", l.RepoFullName, e.Short, page)
@@ -377,16 +408,17 @@ func (h *CallbackHandler) showIndividualEvents(c *gotdbot.Client, u *gotdbot.Upd
 
 	webhookSettingsURL := fmt.Sprintf("https://github.com/%s/%s/settings/hooks/%d", owner, repoName, l.WebhookID)
 	rows = append(rows, []gotdbot.InlineKeyboardButton{
-		{Text: "🌐 Edit more on GitHub", Type: &gotdbot.InlineKeyboardButtonTypeUrl{Url: webhookSettingsURL}},
+		{Text: "GitHub settings", Type: &gotdbot.InlineKeyboardButtonTypeUrl{Url: webhookSettingsURL}},
 	})
 
 	rows = append(rows, []gotdbot.InlineKeyboardButton{
-		{Text: "🔙 Back", Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:r:%s", l.RepoFullName)}},
+		{Text: "Back", Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:r:%s", l.RepoFullName)}},
 	})
 
 	kb := &gotdbot.ReplyMarkupInlineKeyboard{Rows: rows}
 
-	_, err = u.EditMessageText(c, fmt.Sprintf("Individual Events for <b>%s</b>:", l.RepoFullName), &gotdbot.EditTextMessageOpts{
+	_ = u.Answer(c, "", nil)
+	_, err = u.EditMessageText(c, "<b>Notification events</b>\n"+utils.Code(l.RepoFullName)+"\n\nSelect the events to receive. Changing a selection replaces an all-events subscription with individual events.", &gotdbot.EditMessageTextOpts{
 		ReplyMarkup: kb,
 		ParseMode:   gotdbot.ParseModeHTML,
 	})
@@ -396,11 +428,13 @@ func (h *CallbackHandler) showIndividualEvents(c *gotdbot.Client, u *gotdbot.Upd
 func (h *CallbackHandler) showRepoList(c *gotdbot.Client, u *gotdbot.UpdateNewCallbackQuery) error {
 	links, err := h.DB.GetChatLinks(context.Background(), u.ChatId)
 	if err != nil {
-		return err
+		c.Logger.Warnf("Could not load linked repositories: %s", utils.ErrorDetails(err))
+		return u.Answer(c, utils.OperationError("Could not load linked repositories", err), &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 	}
 
 	if len(links) == 0 {
-		_, err = u.EditMessageText(c, "No repositories linked. Use /addrepo first.", nil)
+		_ = u.Answer(c, "", nil)
+		_, err = u.EditMessageText(c, "No repositories linked. Use /addrepo to link one.", nil)
 		return err
 	}
 
@@ -413,7 +447,9 @@ func (h *CallbackHandler) showRepoList(c *gotdbot.Client, u *gotdbot.UpdateNewCa
 
 	kb := &gotdbot.ReplyMarkupInlineKeyboard{Rows: rows}
 
-	_, err = u.EditMessageText(c, "Select a repository to configure:", &gotdbot.EditTextMessageOpts{
+	_ = u.Answer(c, "", nil)
+	_, err = u.EditMessageText(c, "<b>Notification settings</b>\n\nChoose a repository.", &gotdbot.EditMessageTextOpts{
+		ParseMode:   gotdbot.ParseModeHTML,
 		ReplyMarkup: kb,
 	})
 	return err
@@ -421,20 +457,23 @@ func (h *CallbackHandler) showRepoList(c *gotdbot.Client, u *gotdbot.UpdateNewCa
 
 func (h *CallbackHandler) handleRepoPage(c *gotdbot.Client, u *gotdbot.UpdateNewCallbackQuery, page int) error {
 	user, err := h.DB.GetUserByTelegramID(context.Background(), u.SenderUserId)
-	if err != nil || user.EncryptedOAuthToken == "" {
-		_ = u.Answer(c, 0, true, "Auth error. Please /connect again.", "")
+	if err != nil || user == nil || user.EncryptedOAuthToken == "" {
+		if err != nil && !errors.Is(err, mongo.ErrNoDocuments) {
+			c.Logger.Warnf("Load GitHub connection: %s", utils.ErrorDetails(err))
+		}
+		_ = u.Answer(c, utils.ConnectionError(err), &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 
 	token, err := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
 	if err != nil {
-		_ = u.Answer(c, 0, true, "Auth error.", "")
+		_ = u.Answer(c, "GitHub authorization is unavailable. Use /connect to reconnect.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 
 	ghClient, err := h.ClientFactory.GetUserClient(context.Background(), token)
 	if err != nil {
-		_ = u.Answer(c, 0, true, "Failed to create GitHub client.", "")
+		_ = u.Answer(c, "GitHub is unavailable. Please try again later.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 	opts := &gh.RepositoryListOptions{
@@ -448,7 +487,8 @@ func (h *CallbackHandler) handleRepoPage(c *gotdbot.Client, u *gotdbot.UpdateNew
 		if h.handleAuthError(c, u, err) {
 			return nil
 		}
-		_ = u.Answer(c, 0, true, "GitHub API error.", "")
+		c.Logger.Warnf("GitHub API error: %s", utils.ErrorDetails(err))
+		_ = u.Answer(c, utils.OperationError("GitHub API error", err), &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 
@@ -461,11 +501,14 @@ func (h *CallbackHandler) handleRepoPage(c *gotdbot.Client, u *gotdbot.UpdateNew
 
 	var navRow []gotdbot.InlineKeyboardButton
 	if resp.FirstPage != 0 && resp.PrevPage != 0 {
-		navRow = append(navRow, gotdbot.InlineKeyboardButton{Text: "< Prev", Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:ar:pg:%d", resp.PrevPage)}})
+		navRow = append(navRow, gotdbot.InlineKeyboardButton{Text: "Previous", Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:ar:pg:%d", resp.PrevPage)}})
 	}
 
 	startPage := max(page-1, 1)
-	endPage := page + 1
+	endPage := page
+	if resp.NextPage != 0 {
+		endPage = resp.NextPage
+	}
 	if resp.LastPage != 0 && endPage > resp.LastPage {
 		endPage = resp.LastPage
 	}
@@ -482,7 +525,7 @@ func (h *CallbackHandler) handleRepoPage(c *gotdbot.Client, u *gotdbot.UpdateNew
 	}
 
 	if resp.NextPage != 0 {
-		navRow = append(navRow, gotdbot.InlineKeyboardButton{Text: "Next >", Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:ar:pg:%d", resp.NextPage)}})
+		navRow = append(navRow, gotdbot.InlineKeyboardButton{Text: "Next", Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:ar:pg:%d", resp.NextPage)}})
 	}
 
 	if len(navRow) > 0 {
@@ -491,7 +534,13 @@ func (h *CallbackHandler) handleRepoPage(c *gotdbot.Client, u *gotdbot.UpdateNew
 
 	kb := &gotdbot.ReplyMarkupInlineKeyboard{Rows: rows}
 
-	_, err = u.EditMessageText(c, fmt.Sprintf("Select a repository to add (Page %d):", page), &gotdbot.EditTextMessageOpts{
+	listTitle := fmt.Sprintf("<b>Link a repository</b>\n\nChoose a repository · Page %d", page)
+	if len(repos) == 0 {
+		listTitle = "No accessible repositories on this page. Use Previous, or check the connected GitHub account and its permissions."
+	}
+	_ = u.Answer(c, "", nil)
+	_, err = u.EditMessageText(c, listTitle, &gotdbot.EditMessageTextOpts{
+		ParseMode:   gotdbot.ParseModeHTML,
 		ReplyMarkup: kb,
 	})
 
@@ -500,14 +549,19 @@ func (h *CallbackHandler) handleRepoPage(c *gotdbot.Client, u *gotdbot.UpdateNew
 
 func (h *CallbackHandler) handleAddRepoByID(c *gotdbot.Client, u *gotdbot.UpdateNewCallbackQuery, repoID int64) error {
 	user, err := h.DB.GetUserByTelegramID(context.Background(), u.SenderUserId)
-	if err != nil {
-		return nil
+	if err != nil || user == nil || user.EncryptedOAuthToken == "" {
+		if err != nil && !errors.Is(err, mongo.ErrNoDocuments) {
+			c.Logger.Warnf("Load GitHub connection: %s", utils.ErrorDetails(err))
+		}
+		return u.Answer(c, utils.ConnectionError(err), &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 	}
-
-	token, _ := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
+	token, decErr := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
+	if decErr != nil {
+		return u.Answer(c, "GitHub authorization is unavailable. Use /connect again.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
+	}
 	ghClient, err := h.ClientFactory.GetUserClient(context.Background(), token)
 	if err != nil {
-		_ = u.Answer(c, 0, true, "Failed to create GitHub client.", "")
+		_ = u.Answer(c, "GitHub is unavailable. Please try again later.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 
@@ -516,13 +570,13 @@ func (h *CallbackHandler) handleAddRepoByID(c *gotdbot.Client, u *gotdbot.Update
 		if h.handleAuthError(c, u, err) {
 			return nil
 		}
-		_ = u.Answer(c, 0, true, "Repo not found or access denied.", "")
+		_ = u.Answer(c, "Repository unavailable. Check your GitHub access and open /addrepo again.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 
 	if existingLink, _ := h.DB.GetRepoLink(context.Background(), u.ChatId, repo.GetFullName()); existingLink != nil {
-		_ = u.Answer(c, 0, true, fmt.Sprintf("Repository %s is already linked to this chat.", repo.GetFullName()), "")
-		_, err = u.EditMessageText(c, fmt.Sprintf("Repository <b>%s</b> is already linked to this chat.", repo.GetFullName()), &gotdbot.EditTextMessageOpts{
+		_ = u.Answer(c, fmt.Sprintf("Repository %s is already linked to this chat.", repo.GetFullName()), &gotdbot.CallbackAnswerOpts{ShowAlert: true})
+		_, err = u.EditMessageText(c, "<b>Repository already linked</b>\n\n"+utils.Code(repo.GetFullName())+"\nUse /settings to change notification events.", &gotdbot.EditMessageTextOpts{
 			ParseMode: gotdbot.ParseModeHTML,
 		})
 		return err
@@ -530,7 +584,7 @@ func (h *CallbackHandler) handleAddRepoByID(c *gotdbot.Client, u *gotdbot.Update
 
 	chatToken, encErr := utils.Encrypt(fmt.Sprintf("%d", u.ChatId), h.EncryptionKey)
 	if encErr != nil {
-		_ = u.Answer(c, 0, true, "Error generating webhook token.", "")
+		_ = u.Answer(c, "Could not prepare the webhook. Try again or contact the bot administrator.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 
@@ -559,7 +613,9 @@ func (h *CallbackHandler) handleAddRepoByID(c *gotdbot.Client, u *gotdbot.Update
 			return nil
 		}
 
-		_, err = u.EditMessageText(c, fmt.Sprintf("Webhook creation failed: %v. Check permissions", hookErr), &gotdbot.EditTextMessageOpts{
+		_ = u.Answer(c, "", nil)
+		c.Logger.Warnf("Webhook creation failed: %s", utils.ErrorDetails(hookErr))
+		_, err = u.EditMessageText(c, utils.OperationError("Webhook creation failed", hookErr), &gotdbot.EditMessageTextOpts{
 			ParseMode: gotdbot.ParseModeHTML,
 		})
 		return err
@@ -573,11 +629,16 @@ func (h *CallbackHandler) handleAddRepoByID(c *gotdbot.Client, u *gotdbot.Update
 
 	err = h.DB.AddRepoLink(context.Background(), u.ChatId, link)
 	if err != nil {
-		_ = u.Answer(c, 0, false, "Error linking repository.", "")
+		c.Logger.Warnf("Save repository link: %s", utils.ErrorDetails(err))
+		if _, cleanupErr := ghClient.Repositories.DeleteHook(context.Background(), repo.GetOwner().GetLogin(), repo.GetName(), webhookID); cleanupErr != nil {
+			c.Logger.Warnf("Roll back repository webhook: %s", utils.ErrorDetails(cleanupErr))
+			return u.Answer(c, "The webhook was created, but the link could not be saved. Remove the webhook in GitHub settings before trying /addrepo again.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
+		}
+		_ = u.Answer(c, "Could not save the repository link. Try again or contact the bot administrator.", &gotdbot.CallbackAnswerOpts{ShowAlert: false})
 		return nil
 	}
 
-	_, err = u.EditMessageText(c, fmt.Sprintf("✅ Repository <b>%s</b> linked successfully!", repo.GetFullName()), &gotdbot.EditTextMessageOpts{
+	_, err = u.EditMessageText(c, "<b>Repository linked</b>\n\n"+utils.Code(repo.GetFullName())+"\nUse /settings to choose notification events.", &gotdbot.EditMessageTextOpts{
 		ParseMode: gotdbot.ParseModeHTML,
 	})
 	return err
@@ -587,8 +648,8 @@ func (h *CallbackHandler) HandlePRAction(c *gotdbot.Client, u *gotdbot.UpdateNew
 	data := u.DataString()
 	parts := strings.Split(data, ":") // act:approve:uuid
 
-	if len(parts) != 3 {
-		return nil
+	if len(parts) != 3 || parts[0] != "act" || (parts[1] != "approve" && parts[1] != "close") || parts[2] == "" {
+		return u.Answer(c, "Unsupported action. Open the pull request on GitHub.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 	}
 
 	action := parts[1]
@@ -596,7 +657,7 @@ func (h *CallbackHandler) HandlePRAction(c *gotdbot.Client, u *gotdbot.UpdateNew
 
 	prContext, ok := h.ActionCache.Get(actionID)
 	if !ok {
-		_ = u.Answer(c, 0, true, "Action expired. Please open the PR link manually.", "")
+		_ = u.Answer(c, "Action expired. Please open the PR link manually.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 
@@ -607,25 +668,28 @@ func (h *CallbackHandler) HandlePRAction(c *gotdbot.Client, u *gotdbot.UpdateNew
 	repoFullName := fmt.Sprintf("%s/%s", owner, repo)
 	_, err := h.DB.GetRepoLink(context.Background(), u.ChatId, repoFullName)
 	if err != nil {
-		_ = u.Answer(c, 0, true, "This chat is not linked to the repo.", "")
+		_ = u.Answer(c, "Repository not linked to this chat. Use /addrepo to link it.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 
 	user, err := h.DB.GetUserByTelegramID(context.Background(), u.SenderUserId)
-	if err != nil || user.EncryptedOAuthToken == "" {
-		_ = u.Answer(c, 0, true, "Please connect GitHub account first via /connect", "")
+	if err != nil || user == nil || user.EncryptedOAuthToken == "" {
+		if err != nil && !errors.Is(err, mongo.ErrNoDocuments) {
+			c.Logger.Warnf("Load GitHub connection: %s", utils.ErrorDetails(err))
+		}
+		_ = u.Answer(c, utils.ConnectionError(err), &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 
 	token, err := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
 	if err != nil {
-		_ = u.Answer(c, 0, true, "Auth error. Reconnect via /connect", "")
+		_ = u.Answer(c, "GitHub authorization is unavailable. Use /connect to reconnect.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 
 	ghClient, err := h.ClientFactory.GetUserClient(context.Background(), token)
 	if err != nil {
-		_ = u.Answer(c, 0, true, "Failed to create GitHub client.", "")
+		_ = u.Answer(c, "GitHub is unavailable. Please try again later.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 	ctxBg := context.Background()
@@ -635,29 +699,30 @@ func (h *CallbackHandler) HandlePRAction(c *gotdbot.Client, u *gotdbot.UpdateNew
 	switch action {
 	case "approve":
 		_, _, err = ghClient.PullRequests.CreateReview(ctxBg, owner, repo, prNum, &gh.PullRequestReviewRequest{Event: new("APPROVE")})
-		msg = "Approved!"
+		msg = fmt.Sprintf("Approved %s/%s #%d.", owner, repo, prNum)
 	case "close":
 		_, _, err = ghClient.PullRequests.Edit(ctxBg, owner, repo, prNum, &gh.PullRequest{State: new("closed")})
-		msg = "Closed!"
+		msg = fmt.Sprintf("Closed %s/%s #%d.", owner, repo, prNum)
 	}
 
 	if err != nil {
 		if h.handleAuthError(c, u, err) {
 			return nil
 		}
-		_ = u.Answer(c, 0, true, fmt.Sprintf("Failed: %v", err), "")
+		c.Logger.Warnf("Could not update the pull request: %s", utils.ErrorDetails(err))
+		_ = u.Answer(c, utils.OperationError("Could not update the pull request", err), &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 
-	_ = u.Answer(c, 0, true, msg, "")
+	_ = u.Answer(c, msg, &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 	return nil
 }
 
 func (h *CallbackHandler) handleAuthError(c *gotdbot.Client, u *gotdbot.UpdateNewCallbackQuery, err error) bool {
 	if errResp, ok := errors.AsType[*gh.ErrorResponse](err); ok {
-		if errResp.Response.StatusCode == http.StatusUnauthorized || errResp.Response.StatusCode == http.StatusForbidden {
+		if errResp.Response != nil && errResp.Response.StatusCode == http.StatusUnauthorized {
 			_ = h.DB.ClearUserToken(context.Background(), u.SenderUserId)
-			_ = u.Answer(c, 0, true, "GitHub auth error. Token revoked or expired.", "")
+			_ = u.Answer(c, "GitHub authorization has expired. Use /connect to reconnect.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 			return true
 		}
 	}

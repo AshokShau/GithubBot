@@ -1,10 +1,10 @@
 package config
 
 import (
-	"log"
 	"os"
 	"strings"
 
+	"github.com/AshokShau/gotdbot/logger"
 	"github.com/joho/godotenv"
 )
 
@@ -20,7 +20,7 @@ type Config struct {
 	EncryptionKey       string
 }
 
-func Load() *Config {
+func Load(botLogger *logger.Logger) *Config {
 	_ = godotenv.Load()
 
 	required := []string{
@@ -41,7 +41,8 @@ func Load() *Config {
 	}
 
 	if len(missing) > 0 {
-		log.Fatalf("Missing required environment variables: %s", strings.Join(missing, ", "))
+		botLogger.Errorf("Missing required environment variables: %s", strings.Join(missing, ", "))
+		os.Exit(1)
 	}
 
 	return &Config{

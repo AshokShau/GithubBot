@@ -16,7 +16,7 @@ func IsAdmin(b *gotdbot.Client, chatID int64, userID int64, adminCache *cache.Ca
 
 	admins, err := b.GetChatAdministrators(chatID)
 	if err != nil {
-		b.Logger.Warnf("%v", err)
+		b.Logger.Warnf("Read Telegram administrators: %s", ErrorDetails(err))
 		return false
 	}
 
