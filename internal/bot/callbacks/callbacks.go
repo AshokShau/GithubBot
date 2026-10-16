@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"html"
 	"net/http"
 	"strconv"
 	"strings"
@@ -240,7 +239,7 @@ func (h *CallbackHandler) showRepoMenu(c *gotdbot.Client, u *gotdbot.UpdateNewCa
 	}
 
 	_ = u.Answer(c, "", nil)
-	_, err := u.EditMessageText(c, fmt.Sprintf("Configuration for <b>%s</b>:", html.EscapeString(l.RepoFullName)), &gotdbot.EditMessageTextOpts{
+	_, err := u.EditMessageText(c, "<b>Notification settings</b>\n"+utils.Code(l.RepoFullName)+"\n\nChoose a preset or select individual events.", &gotdbot.EditMessageTextOpts{
 		ReplyMarkup: kb,
 		ParseMode:   gotdbot.ParseModeHTML,
 	})
@@ -308,9 +307,9 @@ func (h *CallbackHandler) handlePresets(c *gotdbot.Client, u *gotdbot.UpdateNewC
 		return nil
 	}
 
-	responseText := "<b>Notifications updated</b>\n\nRepository: " + utils.Code(l.RepoFullName) + "\nSubscription: all GitHub events. Events without a formatter are skipped."
+	responseText := "<b>Notifications updated</b>\n" + utils.Code(l.RepoFullName) + "\n\nAll GitHub events. Unsupported events are skipped."
 	if mode == "push" {
-		responseText = "<b>Notifications updated</b>\n\nRepository: " + utils.Code(l.RepoFullName) + "\nSubscription: push events only."
+		responseText = "<b>Notifications updated</b>\n" + utils.Code(l.RepoFullName) + "\n\nPush events only."
 	}
 
 	kb := &gotdbot.ReplyMarkupInlineKeyboard{
@@ -419,7 +418,7 @@ func (h *CallbackHandler) showIndividualEvents(c *gotdbot.Client, u *gotdbot.Upd
 	kb := &gotdbot.ReplyMarkupInlineKeyboard{Rows: rows}
 
 	_ = u.Answer(c, "", nil)
-	_, err = u.EditMessageText(c, fmt.Sprintf("<b>Notification events</b>\n\nRepository: %s\nChanging a selection replaces an all-events subscription with the selectable events shown below.", utils.Code(l.RepoFullName)), &gotdbot.EditMessageTextOpts{
+	_, err = u.EditMessageText(c, "<b>Notification events</b>\n"+utils.Code(l.RepoFullName)+"\n\nSelect the events to receive. Changing a selection replaces an all-events subscription with individual events.", &gotdbot.EditMessageTextOpts{
 		ReplyMarkup: kb,
 		ParseMode:   gotdbot.ParseModeHTML,
 	})
@@ -449,7 +448,8 @@ func (h *CallbackHandler) showRepoList(c *gotdbot.Client, u *gotdbot.UpdateNewCa
 	kb := &gotdbot.ReplyMarkupInlineKeyboard{Rows: rows}
 
 	_ = u.Answer(c, "", nil)
-	_, err = u.EditMessageText(c, "Select a repository to configure:", &gotdbot.EditMessageTextOpts{
+	_, err = u.EditMessageText(c, "<b>Notification settings</b>\n\nChoose a repository.", &gotdbot.EditMessageTextOpts{
+		ParseMode:   gotdbot.ParseModeHTML,
 		ReplyMarkup: kb,
 	})
 	return err
@@ -501,7 +501,7 @@ func (h *CallbackHandler) handleRepoPage(c *gotdbot.Client, u *gotdbot.UpdateNew
 
 	var navRow []gotdbot.InlineKeyboardButton
 	if resp.FirstPage != 0 && resp.PrevPage != 0 {
-		navRow = append(navRow, gotdbot.InlineKeyboardButton{Text: "< Prev", Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:ar:pg:%d", resp.PrevPage)}})
+		navRow = append(navRow, gotdbot.InlineKeyboardButton{Text: "Previous", Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:ar:pg:%d", resp.PrevPage)}})
 	}
 
 	startPage := max(page-1, 1)
@@ -525,7 +525,7 @@ func (h *CallbackHandler) handleRepoPage(c *gotdbot.Client, u *gotdbot.UpdateNew
 	}
 
 	if resp.NextPage != 0 {
-		navRow = append(navRow, gotdbot.InlineKeyboardButton{Text: "Next >", Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:ar:pg:%d", resp.NextPage)}})
+		navRow = append(navRow, gotdbot.InlineKeyboardButton{Text: "Next", Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:ar:pg:%d", resp.NextPage)}})
 	}
 
 	if len(navRow) > 0 {
@@ -534,12 +534,13 @@ func (h *CallbackHandler) handleRepoPage(c *gotdbot.Client, u *gotdbot.UpdateNew
 
 	kb := &gotdbot.ReplyMarkupInlineKeyboard{Rows: rows}
 
-	listTitle := fmt.Sprintf("Select a repository to add (page %d):", page)
+	listTitle := fmt.Sprintf("<b>Link a repository</b>\n\nChoose a repository · Page %d", page)
 	if len(repos) == 0 {
 		listTitle = "No accessible repositories on this page. Use Previous, or check the connected GitHub account and its permissions."
 	}
 	_ = u.Answer(c, "", nil)
 	_, err = u.EditMessageText(c, listTitle, &gotdbot.EditMessageTextOpts{
+		ParseMode:   gotdbot.ParseModeHTML,
 		ReplyMarkup: kb,
 	})
 
@@ -575,7 +576,7 @@ func (h *CallbackHandler) handleAddRepoByID(c *gotdbot.Client, u *gotdbot.Update
 
 	if existingLink, _ := h.DB.GetRepoLink(context.Background(), u.ChatId, repo.GetFullName()); existingLink != nil {
 		_ = u.Answer(c, fmt.Sprintf("Repository %s is already linked to this chat.", repo.GetFullName()), &gotdbot.CallbackAnswerOpts{ShowAlert: true})
-		_, err = u.EditMessageText(c, fmt.Sprintf("Repository <b>%s</b> is already linked to this chat.", html.EscapeString(repo.GetFullName())), &gotdbot.EditMessageTextOpts{
+		_, err = u.EditMessageText(c, "<b>Repository already linked</b>\n\n"+utils.Code(repo.GetFullName())+"\nUse /settings to change notification events.", &gotdbot.EditMessageTextOpts{
 			ParseMode: gotdbot.ParseModeHTML,
 		})
 		return err
@@ -637,7 +638,7 @@ func (h *CallbackHandler) handleAddRepoByID(c *gotdbot.Client, u *gotdbot.Update
 		return nil
 	}
 
-	_, err = u.EditMessageText(c, fmt.Sprintf("Repository <b>%s</b> linked successfully!", html.EscapeString(repo.GetFullName())), &gotdbot.EditMessageTextOpts{
+	_, err = u.EditMessageText(c, "<b>Repository linked</b>\n\n"+utils.Code(repo.GetFullName())+"\nUse /settings to choose notification events.", &gotdbot.EditMessageTextOpts{
 		ParseMode: gotdbot.ParseModeHTML,
 	})
 	return err
@@ -667,7 +668,7 @@ func (h *CallbackHandler) HandlePRAction(c *gotdbot.Client, u *gotdbot.UpdateNew
 	repoFullName := fmt.Sprintf("%s/%s", owner, repo)
 	_, err := h.DB.GetRepoLink(context.Background(), u.ChatId, repoFullName)
 	if err != nil {
-		_ = u.Answer(c, "This chat is not linked to the repo.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
+		_ = u.Answer(c, "Repository not linked to this chat. Use /addrepo to link it.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 

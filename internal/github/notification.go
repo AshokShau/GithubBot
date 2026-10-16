@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"net/url"
 	"regexp"
 	"strings"
 
 	"github-webhook/internal/utils"
 
 	"github.com/AshokShau/gotdbot"
+	gh "github.com/google/go-github/v92/github"
 )
 
 type eventSpec struct {
@@ -157,7 +159,7 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 	}
 
 	if action != "" && !unsupportedAction {
-		heading += " · " + utils.Clip(strings.ReplaceAll(action, "_", " "), 100)
+		heading += " " + utils.Clip(strings.ReplaceAll(action, "_", " "), 100)
 	}
 	if name == "watch" && action == "started" {
 		heading = "Repository watched"
@@ -171,11 +173,6 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 		}
 	}
 	var b strings.Builder
-	b.WriteString("<b>" + html.EscapeString(heading) + "</b>\n\n")
-	if unsupportedAction {
-		lineText := "Action received: " + utils.Clip(action, 100) + ". Open GitHub for details."
-		b.WriteString(html.EscapeString(lineText) + "\n\n")
-	}
 	repo := p.object("repository")
 	repoName := cmp.Or(repo.text("full_name"), repo.text("name"))
 	repoURL := utils.SafeURL(repo.text("html_url"))
@@ -184,23 +181,52 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 	}
 	line := func(label, value string) {
 		if value != "" {
-			b.WriteString("<b>" + label + ":</b> " + value + "\n")
+			b.WriteString(label + ": " + value + "\n")
 		}
 	}
-	line("Repository", utils.Link(utils.Clip(repoName, 180), repoURL))
 	actor := cmp.Or(p.text("sender.login"), p.text("pusher.name"), p.text("sender.name"))
-	if actor != "" {
-		line("Actor", utils.Link(utils.Clip(actor, 100), p.text("sender.html_url")))
+	targetURL := firstURL(resource.text("html_url"), resource.text("web_url"), resource.text("target_url"), p.text("workflow_job.html_url"), p.text("deployment_status.target_url"), p.text("pull_request.html_url"), p.text("issue.html_url"), p.text("discussion.html_url"), repoURL)
+	buttonLabel := map[string]string{
+		"issues": "View Issue", "issue_comment": "View Comment", "pull_request": "View Pull Request", "pull_request_target": "View Pull Request",
+		"pull_request_review": "View Review", "pull_request_review_comment": "View Comment", "pull_request_review_thread": "View Thread", "commit_comment": "View Comment",
+		"workflow_run": "View Workflow", "workflow_job": "View Job", "workflow_dispatch": "View Actions", "check_run": "View Check", "check_suite": "View Checks",
+		"release": "View Release", "discussion": "View Discussion", "discussion_comment": "View Comment", "deployment": "View Deployment", "deployment_status": "View Deployment",
+		"repository": "View Repository", "fork": "View Fork", "star": "View Repository", "watch": "View Repository", "public": "View Repository", "gollum": "View Wiki",
+		"label": "View Label", "milestone": "View Milestone",
+	}[name]
+	if buttonLabel == "" {
+		buttonLabel = "View on GitHub"
 	}
-	targetURL := firstURL(resource.text("html_url"), resource.text("web_url"), resource.text("target_url"), p.text("workflow_job.html_url"), p.text("deployment_status.target_url"), repoURL)
+	b.WriteString("<b>" + utils.Link(heading, targetURL) + "</b>\n")
+	if unsupportedAction {
+		b.WriteString(html.EscapeString("Action received: "+utils.Clip(action, 100)+". Open GitHub for details.") + "\n")
+	}
 	title := resource.text("title")
 	if name == "release" {
 		title = cmp.Or(title, resource.text("name"))
 	}
+	if name == "workflow_run" || name == "workflow_job" || name == "check_run" {
+		title = resource.text("name")
+		if run := resource.text("run_number"); run != "" && run != "0" {
+			title += " #" + run
+		}
+	}
 	if number := resource.text("number"); number != "" && number != "0" {
 		title = "#" + number + " " + title
 	}
-	line("Title", html.EscapeString(utils.Clip(strings.TrimSpace(title), 240)))
+	if title = strings.TrimSpace(title); title != "" {
+		b.WriteString(utils.Link(utils.Clip(title, 240), targetURL) + "\n")
+	}
+	if repoName != "" {
+		b.WriteString(utils.Link(utils.Clip(repoName, 180), repoURL))
+	}
+	if actor != "" {
+		if repoName != "" {
+			b.WriteString(" · ")
+		}
+		b.WriteString("by " + utils.Link(utils.Clip(actor, 100), p.text("sender.html_url")))
+	}
+	b.WriteString("\n\n")
 
 	// Parent context remains visible for comments and reviews.
 	for _, key := range []string{"issue", "pull_request", "discussion"} {
@@ -210,11 +236,9 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 			if n := parent.text("number"); n != "" {
 				label = strings.TrimSpace("#" + n + " " + label)
 			}
-			parentLabel := strings.ToUpper(key[:1]) + strings.ReplaceAll(key[1:], "_", " ")
-			if key == "issue" && parent.object("pull_request") != nil {
-				parentLabel = "Pull request"
+			if label != "" {
+				b.WriteString(utils.Link(utils.Clip(label, 240), firstURL(parent.text("html_url"), targetURL)) + "\n")
 			}
-			line(parentLabel, utils.Link(utils.Clip(label, 240), parent.text("html_url")))
 			if targetURL == repoURL {
 				targetURL = firstURL(parent.text("html_url"), targetURL)
 			}
@@ -222,6 +246,12 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 	}
 	var excerpt string
 	for _, field := range spec.fields {
+		if (field == "name" || field == "run_number") && (name == "workflow_run" || name == "workflow_job" || name == "check_run") {
+			continue
+		}
+		if (field == "head.ref" || field == "base.ref") && (name == "pull_request" || name == "pull_request_target") {
+			continue
+		}
 		if field == "body" || field == "output.summary" {
 			excerpt, _ = resource.value(field).(string)
 			continue
@@ -247,6 +277,12 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 		}
 	}
 	if name == "issues" || name == "pull_request" || name == "pull_request_target" {
+		if source, target := resource.text("head.ref"), resource.text("base.ref"); source != "" && target != "" {
+			b.WriteString(utils.Code(utils.Clip(source, 160)) + " → " + utils.Code(utils.Clip(target, 160)) + "\n")
+		} else {
+			line("Source branch", utils.Code(utils.Clip(source, 160)))
+			line("Target branch", utils.Code(utils.Clip(target, 160)))
+		}
 		for _, item := range []struct{ key, label string }{{"assignee.login", "Assignee"}, {"label.name", "Label"}, {"milestone.title", "Milestone"}, {"requested_reviewer.login", "Reviewer"}, {"requested_team.name", "Review team"}} {
 			if v := p.text(item.key); v != "" {
 				line(item.label, utils.Code(utils.Clip(v, 160)))
@@ -258,43 +294,128 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 	}
 	switch name {
 	case "push":
-		ref := p.text("ref")
-		line("Reference", utils.Code(utils.Clip(ref, 200)))
-		for _, flag := range []struct{ key, label string }{{"created", "Reference created"}, {"deleted", "Reference deleted"}, {"forced", "Force push"}} {
-			if p.value(flag.key) == true {
-				line("Change", flag.label)
+		var push gh.PushEvent
+		if json.Unmarshal(body, &push) != nil {
+			return nil, nil
+		}
+		b.Reset()
+		ref := push.GetRef()
+		branch := strings.TrimPrefix(strings.TrimPrefix(ref, "refs/heads/"), "refs/tags/")
+		referenceType := "Reference"
+		if strings.HasPrefix(ref, "refs/heads/") {
+			referenceType = "Branch"
+		} else if strings.HasPrefix(ref, "refs/tags/") {
+			referenceType = "Tag"
+		}
+		commits := make([]*gh.HeadCommit, 0, len(push.GetCommits()))
+		if !push.GetDeleted() {
+			for _, commit := range push.GetCommits() {
+				if commit != nil && (commit.GetID() != "" || commit.GetSHA() != "" || strings.TrimSpace(commit.GetMessage()) != "") {
+					commits = append(commits, commit)
+				}
+			}
+			if head := push.GetHeadCommit(); len(commits) == 0 && head != nil && (head.GetID() != "" || head.GetSHA() != "" || strings.TrimSpace(head.GetMessage()) != "") {
+				commits = append(commits, head)
 			}
 		}
-		commits := p.list("commits")
-		if len(commits) == 0 && p.object("head_commit") != nil {
-			commits = []any{map[string]any(p.object("head_commit"))}
+		count := max(len(commits), push.GetSize())
+		heading = "Push to"
+		switch {
+		case push.GetDeleted():
+			heading = referenceType + " deleted in"
+		case count == 1:
+			heading = "1 new commit to"
+		case count > 1:
+			heading = fmt.Sprintf("%d new commits to", count)
+		case push.GetCreated():
+			heading = referenceType + " created in"
 		}
-		count := cmp.Or(p.text("size"), fmt.Sprint(len(commits)))
-		line("Commits", html.EscapeString(count))
-		for i, c := range commits {
-			if i == 5 {
-				b.WriteString(fmt.Sprintf("… %d more commits in this payload.\n", len(commits)-i))
-				break
+		referenceLabel, referenceURL := repoName, repoURL
+		if branch != "" {
+			if referenceLabel != "" {
+				referenceLabel += ":"
 			}
-			m, ok := c.(map[string]any)
-			if !ok {
-				continue
+			referenceLabel += branch
+			if repoURL != "" && !push.GetDeleted() {
+				referenceURL = repoURL + "/tree/" + url.PathEscape(branch)
 			}
-			commit := payload(m)
-			sha := commit.text("id")
-			subject, _, _ := strings.Cut(commit.text("message"), "\n")
-			author := cmp.Or(commit.text("author.username"), commit.text("author.name"))
-			commitURL := commit.text("url")
+		}
+		b.WriteString("<b>" + heading + "</b>")
+		if referenceLabel != "" {
+			b.WriteString(" " + utils.Link(utils.Clip(referenceLabel, 240), referenceURL))
+		}
+		var changes []string
+		if push.GetForced() {
+			changes = append(changes, "Force push")
+		}
+		if push.GetCreated() && count > 0 && !push.GetDeleted() {
+			changes = append(changes, referenceType+" created")
+		}
+		if len(changes) > 0 {
+			b.WriteString("\n<i>" + strings.Join(changes, " · ") + "</i>")
+		}
+		b.WriteString("\n\n")
+		for _, commit := range commits[:min(len(commits), 5)] {
+			sha := cmp.Or(commit.GetID(), commit.GetSHA())
+			subject, _, _ := strings.Cut(strings.TrimSpace(commit.GetMessage()), "\n")
+			commitURL := firstURL(commit.GetURL())
 			if commitURL == "" && repoURL != "" && sha != "" {
-				commitURL = repoURL + "/commit/" + sha
+				commitURL = repoURL + "/commit/" + url.PathEscape(sha)
 			}
-			b.WriteString("• " + utils.Link(utils.ShortSHA(sha), commitURL) + " " + html.EscapeString(utils.Clip(subject, 220)))
+			b.WriteString("- ")
+			if sha != "" {
+				b.WriteString(utils.Link(utils.ShortSHA(sha), commitURL))
+				if subject != "" {
+					b.WriteString(": ")
+				}
+			}
+			b.WriteString(html.EscapeString(utils.Clip(subject, 220)))
+			author := cmp.Or(commit.GetAuthor().GetLogin(), commit.GetAuthor().GetName())
 			if author != "" {
-				b.WriteString(" — " + html.EscapeString(utils.Clip(author, 80)))
+				authorURL := ""
+				if commit.GetAuthor().GetLogin() != "" {
+					authorURL = "https://github.com/" + url.PathEscape(commit.GetAuthor().GetLogin())
+				}
+				b.WriteString(" by " + utils.Link(utils.Clip(author, 80), authorURL))
 			}
 			b.WriteByte('\n')
 		}
-		targetURL = firstURL(p.text("compare"), repoURL)
+		if remaining := count - min(len(commits), 5); remaining > 0 && !push.GetDeleted() {
+			noun := "commits"
+			if remaining == 1 {
+				noun = "commit"
+			}
+			b.WriteString(fmt.Sprintf("… %d more %s.\n", remaining, noun))
+		}
+		if actor != "" && (len(commits) != 1 || (commits[0].GetAuthor().GetLogin() != actor && commits[0].GetAuthor().GetName() != actor)) {
+			if len(commits) > 0 || count > 0 && !push.GetDeleted() {
+				b.WriteByte('\n')
+			}
+			verb := "Pushed"
+			if push.GetDeleted() {
+				verb = "Deleted"
+			} else if push.GetCreated() && count == 0 {
+				verb = "Created"
+			}
+			b.WriteString(verb + " by " + utils.Link(utils.Clip(actor, 100), p.text("sender.html_url")) + "\n")
+		}
+		buttonLabel = "Compare Changes"
+		targetURL = firstURL(push.GetCompare(), referenceURL, repoURL)
+		if push.GetDeleted() {
+			buttonLabel, targetURL = "View Repository", repoURL
+		} else if count == 1 && len(commits) == 1 {
+			commitURL := firstURL(commits[0].GetURL())
+			if commitURL == "" && repoURL != "" {
+				if sha := cmp.Or(commits[0].GetID(), commits[0].GetSHA()); sha != "" {
+					commitURL = repoURL + "/commit/" + url.PathEscape(sha)
+				}
+			}
+			if commitURL != "" {
+				buttonLabel, targetURL = "View Commit", commitURL
+			}
+		} else if count == 0 {
+			buttonLabel, targetURL = "View Repository", repoURL
+		}
 	case "gollum":
 		pages := p.list("pages")
 		for i, page := range pages {
@@ -337,14 +458,15 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 		if resource.value("draft") == true {
 			line("State", "Draft")
 		}
+	case "star":
+		line("Stars", html.EscapeString(repo.text("stargazers_count")))
+	case "watch":
+		line("Watchers", html.EscapeString(repo.text("subscribers_count")))
 	case "repository":
 		line("Previous name", utils.Code(p.text("changes.repository.name.from")))
 	}
 
 	header := utils.LimitHTML(strings.TrimSpace(b.String()), 3400)
-	if targetURL != "" {
-		header += "\n\n" + utils.Link("View on GitHub", targetURL)
-	}
 	header = "<p>" + strings.ReplaceAll(header, "\n", "<br>") + "</p>"
 	message := &gotdbot.InputRichMessage{Source: &gotdbot.RichMessageSourceHtml{Text: header}}
 	if strings.TrimSpace(excerpt) != "" {
@@ -354,5 +476,5 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 	if targetURL == "" {
 		return message, nil
 	}
-	return message, &gotdbot.ReplyMarkupInlineKeyboard{Rows: [][]gotdbot.InlineKeyboardButton{{{Text: "Open on GitHub", Type: &gotdbot.InlineKeyboardButtonTypeUrl{Url: targetURL}}}}}
+	return message, &gotdbot.ReplyMarkupInlineKeyboard{Rows: [][]gotdbot.InlineKeyboardButton{{{Text: buttonLabel, Type: &gotdbot.InlineKeyboardButtonTypeUrl{Url: targetURL}}}}}
 }

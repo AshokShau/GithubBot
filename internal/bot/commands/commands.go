@@ -62,14 +62,13 @@ func NewCommandHandler(cfg *config.Config, database *db.DB, oauth *gh.OAuth, sta
 func (h *CommandHandler) Start(c *gotdbot.Client, m *gotdbot.Message) error {
 	msg := `<b>GitHub Bot</b>
 
-I can help you manage your GitHub repositories and notifications directly from Telegram.
+GitHub notifications and repository tools, here in Telegram.
 
-<b>Get Started:</b>
-1. Use <code>/connect</code> to link your GitHub account.
-2. Use <code>/addrepo</code> to link a repository and start receiving notifications.
-3. Use <code>/settings</code> to customize your notification preferences.
+<code>/connect</code> — connect your GitHub account
+<code>/addrepo</code> — choose a repository for notifications
+<code>/settings</code> — choose which events to receive
 
-Need help? Type <code>/help</code> for a full list of commands.`
+Use <code>/help</code> to see all commands.`
 	_, err := m.ReplyText(c, msg, &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
@@ -142,12 +141,12 @@ func (h *CommandHandler) AddRepo(c *gotdbot.Client, m *gotdbot.Message) error {
 	}
 
 	if owner == "" || repo == "" {
-		_, _ = m.ReplyText(c, "Invalid repository format. Use owner/repo", nil)
+		_, _ = m.ReplyText(c, "Invalid repository name. Use /addrepo owner/repo.", nil)
 		return nil
 	}
 
 	if existingLink, _ := h.DB.GetRepoLink(context.Background(), m.ChatId, repoFullName); existingLink != nil {
-		msg := fmt.Sprintf("Repository <b>%s</b> is already linked to this chat.", html.EscapeString(repoFullName))
+		msg := "<b>Repository already linked</b>\n\n" + utils.Code(repoFullName) + "\nUse /settings to change notification events."
 		_, err = m.ReplyText(c, msg, &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 		return err
 	}
@@ -232,7 +231,7 @@ func (h *CommandHandler) AddRepo(c *gotdbot.Client, m *gotdbot.Message) error {
 		return err
 	}
 
-	msg := fmt.Sprintf("Repository <b>%s</b> linked successfully!", html.EscapeString(repoFullName))
+	msg := "<b>Repository linked</b>\n\n" + utils.Code(repoFullName) + "\nUse /settings to choose notification events."
 	_, err = m.ReplyText(c, msg, &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
@@ -293,7 +292,7 @@ func (h *CommandHandler) sendRepoList(c *gotdbot.Client, m *gotdbot.Message, pag
 	var navRow []gotdbot.InlineKeyboardButton
 
 	if resp.FirstPage != 0 && resp.PrevPage != 0 {
-		navRow = append(navRow, gotdbot.InlineKeyboardButton{Text: "< Prev", Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:ar:pg:%d", resp.PrevPage)}})
+		navRow = append(navRow, gotdbot.InlineKeyboardButton{Text: "Previous", Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:ar:pg:%d", resp.PrevPage)}})
 	}
 
 	startPage := max(page-1, 1)
@@ -318,14 +317,15 @@ func (h *CommandHandler) sendRepoList(c *gotdbot.Client, m *gotdbot.Message, pag
 	}
 
 	if resp.NextPage != 0 {
-		navRow = append(navRow, gotdbot.InlineKeyboardButton{Text: "Next >", Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:ar:pg:%d", resp.NextPage)}})
+		navRow = append(navRow, gotdbot.InlineKeyboardButton{Text: "Next", Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:ar:pg:%d", resp.NextPage)}})
 	}
 
 	if len(navRow) > 0 {
 		kb = append(kb, navRow)
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("Select a repository to add (Page %d):", page), &gotdbot.SendMessageOpts{
+	_, err = m.ReplyText(c, fmt.Sprintf("<b>Link a repository</b>\n\nChoose a repository · Page %d", page), &gotdbot.SendMessageOpts{
+		ParseMode:             gotdbot.ParseModeHTML,
 		ReplyMarkup:           &gotdbot.ReplyMarkupInlineKeyboard{Rows: kb},
 		DisableWebPagePreview: true})
 	return err
@@ -356,7 +356,8 @@ func (h *CommandHandler) Settings(c *gotdbot.Client, m *gotdbot.Message) error {
 		})
 	}
 
-	_, err = m.ReplyText(c, "Select a repository to configure:", &gotdbot.SendMessageOpts{
+	_, err = m.ReplyText(c, "<b>Notification settings</b>\n\nChoose a repository.", &gotdbot.SendMessageOpts{
+		ParseMode:             gotdbot.ParseModeHTML,
 		ReplyMarkup:           &gotdbot.ReplyMarkupInlineKeyboard{Rows: kb},
 		DisableWebPagePreview: true})
 	return err
@@ -386,15 +387,15 @@ func (h *CommandHandler) RemoveRepo(c *gotdbot.Client, m *gotdbot.Message) error
 	if link.WebhookID != 0 {
 		user, uErr := h.DB.GetUserByTelegramID(context.Background(), m.SenderID())
 		if uErr != nil || user == nil || user.EncryptedOAuthToken == "" {
-			webhookStatusMsg = "\n\n <b>Warning:</b> You are not connected to GitHub. The webhook could not be removed from the repository settings. Please remove it manually."
+			webhookStatusMsg = "\n\n<b>Webhook cleanup needed</b>\nYou are not connected to GitHub. The webhook could not be removed from the repository settings. Please remove it manually."
 		} else {
 			token, decErr := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
 			if decErr != nil {
-				webhookStatusMsg = "\n\n <b>Warning:</b> GitHub authorization is unavailable. Use /connect, or remove the webhook in the repository settings."
+				webhookStatusMsg = "\n\n<b>Webhook cleanup needed</b>\nGitHub authorization is unavailable. Use /connect, or remove the webhook in the repository settings."
 			} else {
 				client, err := h.ClientFactory.GetUserClient(context.Background(), token)
 				if err != nil {
-					webhookStatusMsg = "\n\n <b>Warning:</b> GitHub is unavailable. Please try again later. Webhook not removed."
+					webhookStatusMsg = "\n\n<b>Webhook cleanup needed</b>\nGitHub is unavailable. Please try again later. Webhook not removed."
 				} else {
 					var owner, repo string
 					for i := 0; i < len(repoFullName); i++ {
@@ -409,12 +410,12 @@ func (h *CommandHandler) RemoveRepo(c *gotdbot.Client, m *gotdbot.Message) error
 						_, err := client.Repositories.DeleteHook(context.Background(), owner, repo, link.WebhookID)
 						if err != nil {
 							if h.handleAuthError(c, m, err) {
-								webhookStatusMsg = "\n\n <b>Warning:</b> GitHub authentication failed. Webhook not removed."
+								webhookStatusMsg = "\n\n<b>Webhook cleanup needed</b>\nGitHub authentication failed. Webhook not removed."
 							} else {
 								if errResp, ok := errors.AsType[*github.ErrorResponse](err); ok && errResp.Response != nil && errResp.Response.StatusCode == http.StatusNotFound {
 								} else {
-									c.Logger.Warnf("\\n\\n <b>Warning:</b> Failed to remove webhook from GitHub: %s", utils.ErrorDetails(err))
-									webhookStatusMsg = utils.OperationError("\\n\\n <b>Warning:</b> Failed to remove webhook from GitHub", err)
+									c.Logger.Warnf("Failed to remove webhook from GitHub: %s", utils.ErrorDetails(err))
+									webhookStatusMsg = "\n\n<b>Webhook cleanup needed</b>\n" + utils.OperationError("Could not remove the GitHub webhook", err)
 								}
 							}
 						}
@@ -430,7 +431,7 @@ func (h *CommandHandler) RemoveRepo(c *gotdbot.Client, m *gotdbot.Message) error
 		return err
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("Repository <b>%s</b> removed successfully.%s", html.EscapeString(repoFullName), webhookStatusMsg), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	_, err = m.ReplyText(c, "<b>Repository unlinked</b>\n\n"+utils.Code(repoFullName)+webhookStatusMsg, &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
@@ -449,15 +450,15 @@ func (h *CommandHandler) Repos(c *gotdbot.Client, m *gotdbot.Message) error {
 
 	var msg strings.Builder
 	for _, l := range links {
-		msg.WriteString(fmt.Sprintf("• <b>%s</b>\n", html.EscapeString(l.RepoFullName)))
+		msg.WriteString(utils.Code(l.RepoFullName) + "\n")
 	}
 
-	_, err = m.ReplyText(c, utils.LimitHTML("<b>Linked Repositories:</b>\n"+msg.String(), utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	_, err = m.ReplyText(c, utils.LimitHTML("<b>Linked repositories</b>\n\n"+msg.String(), utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
 func (h *CommandHandler) Help(c *gotdbot.Client, m *gotdbot.Message) error {
-	msg := `<b>GitHub Bot Commands:</b>
+	msg := `<b>GitHub Bot commands</b>
 
 <b>Authentication</b>
 <code>/connect</code> - Connect your GitHub account using OAuth
@@ -651,7 +652,7 @@ func (h *CommandHandler) handleAuthError(c *gotdbot.Client, m *gotdbot.Message, 
 	if errResp, ok := errors.AsType[*github.ErrorResponse](err); ok {
 		if errResp.Response != nil && errResp.Response.StatusCode == http.StatusUnauthorized {
 			_ = h.DB.ClearUserToken(context.Background(), m.SenderID())
-			msg := "<b>GitHub authentication failed.</b>\nIt seems your token has expired or was revoked. Please /connect again."
+			msg := "<b>GitHub authorization expired</b>\n\nUse /connect in a private chat to reconnect."
 			_, _ = m.ReplyText(c, msg, &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 			return true
 		}
@@ -704,7 +705,7 @@ func (h *CommandHandler) Approve(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("Pull request %s/%s #%d approved.", mContext.Owner, mContext.Repo, mContext.IssueNumber), nil)
+	_, err = m.ReplyText(c, "<b>Pull request approved</b>\n"+utils.Code(fmt.Sprintf("%s/%s #%d", mContext.Owner, mContext.Repo, mContext.IssueNumber)), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
@@ -742,11 +743,14 @@ func (h *CommandHandler) handleIssueAction(c *gotdbot.Client, m *gotdbot.Message
 		return nil
 	}
 
-	action := "closed"
-	if state == "open" {
-		action = "reopened"
+	action := "Issue closed"
+	if strings.HasPrefix(mContext.Type, "pr") {
+		action = "Pull request closed"
 	}
-	_, err = m.ReplyText(c, fmt.Sprintf("%s/%s #%d %s.", mContext.Owner, mContext.Repo, mContext.IssueNumber, action), nil)
+	if state == "open" {
+		action = strings.TrimSuffix(action, "closed") + "reopened"
+	}
+	_, err = m.ReplyText(c, "<b>"+action+"</b>\n"+utils.Code(fmt.Sprintf("%s/%s #%d", mContext.Owner, mContext.Repo, mContext.IssueNumber)), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
@@ -858,33 +862,14 @@ func (h *CommandHandler) Me(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	name := "N/A"
-	if user.GetName() != "" {
-		name = user.GetName()
+	msg := "<b>" + utils.Link("@"+user.GetLogin(), user.GetHTMLURL()) + "</b>"
+	if name := user.GetName(); name != "" {
+		msg += "\n" + html.EscapeString(name)
 	}
-
-	email := "N/A"
-	if user.GetEmail() != "" {
-		email = user.GetEmail()
+	if email := user.GetEmail(); email != "" {
+		msg += "\n" + html.EscapeString(email)
 	}
-
-	msg := fmt.Sprintf(
-		"<b>GitHub Profile:</b>\n\n"+
-			"• <b>Username:</b> %s\n"+
-			"• <b>Name:</b> %s\n"+
-			"• <b>Email:</b> %s\n"+
-			"• <b>Followers:</b> %d\n"+
-			"• <b>Following:</b> %d\n"+
-			"• <b>Public Repositories:</b> %d\n"+
-			"• <b>Account URL:</b> %s",
-		html.EscapeString(user.GetLogin()),
-		html.EscapeString(name),
-		html.EscapeString(email),
-		user.GetFollowers(),
-		user.GetFollowing(),
-		user.GetPublicRepos(),
-		utils.Link("View profile", user.GetHTMLURL()),
-	)
+	msg += fmt.Sprintf("\n\n%d followers · %d following\n%d public repositories", user.GetFollowers(), user.GetFollowing(), user.GetPublicRepos())
 
 	_, err = m.ReplyText(c, utils.LimitHTML(msg, utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
@@ -934,52 +919,28 @@ func (h *CommandHandler) Repo(c *gotdbot.Client, m *gotdbot.Message) error {
 		c.Logger.Warnf("Fetch repository pull request counts: %s", utils.ErrorDetails(err))
 	}
 
-	desc := "No description provided."
-	if repoInfo.GetDescription() != "" {
-		desc = repoInfo.GetDescription()
+	msg := "<b>" + utils.Link(repoInfo.GetFullName(), repoInfo.GetHTMLURL()) + "</b>"
+	if desc := repoInfo.GetDescription(); desc != "" {
+		msg += "\n\n" + html.EscapeString(desc)
 	}
-
-	visibility := "public"
+	visibility := "Public"
 	if repoInfo.GetPrivate() {
-		visibility = "private"
+		visibility = "Private"
 	}
-
-	license := "N/A"
-	if repoInfo.GetLicense() != nil && repoInfo.GetLicense().GetName() != "" {
-		license = repoInfo.GetLicense().GetName()
+	if repoInfo.GetArchived() {
+		visibility += " · Archived"
 	}
-
-	language := "N/A"
-	if repoInfo.GetLanguage() != "" {
-		language = repoInfo.GetLanguage()
+	msg += "\n\n" + visibility
+	if branch := repoInfo.GetDefaultBranch(); branch != "" {
+		msg += " · " + utils.Code(branch)
 	}
-
-	msg := fmt.Sprintf(
-		"<b>Repository:</b> %s\n\n"+
-			"• <b>Description:</b> %s\n"+
-			"• <b>Visibility:</b> %s\n"+
-			"• <b>Default Branch:</b> %s\n"+
-			"• <b>Stars:</b> %d\n"+
-			"• <b>Forks:</b> %d\n"+
-			"• <b>Watchers:</b> %d\n"+
-			"• <b>Open Issues:</b> %s\n"+
-			"• <b>Open PRs:</b> %s\n"+
-			"• <b>License:</b> %s\n"+
-			"• <b>Language:</b> %s\n"+
-			"• <b>URL:</b> %s",
-		html.EscapeString(repoInfo.GetFullName()),
-		html.EscapeString(desc),
-		html.EscapeString(visibility),
-		html.EscapeString(repoInfo.GetDefaultBranch()),
-		repoInfo.GetStargazersCount(),
-		repoInfo.GetForksCount(),
-		repoInfo.GetSubscribersCount(),
-		openIssuesText,
-		openPRsText,
-		html.EscapeString(license),
-		html.EscapeString(language),
-		utils.Link("View repository", repoInfo.GetHTMLURL()),
-	)
+	msg += fmt.Sprintf("\n%d stars · %d forks · %d watchers\n%s open issues · %s open pull requests", repoInfo.GetStargazersCount(), repoInfo.GetForksCount(), repoInfo.GetSubscribersCount(), openIssuesText, openPRsText)
+	if language := repoInfo.GetLanguage(); language != "" {
+		msg += "\nLanguage: " + utils.Code(language)
+	}
+	if license := repoInfo.GetLicense().GetName(); license != "" {
+		msg += "\nLicense: " + html.EscapeString(license)
+	}
 
 	_, err = m.ReplyText(c, utils.LimitHTML(msg, utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
@@ -1007,7 +968,7 @@ func (h *CommandHandler) Star(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("Starred repository <b>%s/%s</b>!", html.EscapeString(owner), html.EscapeString(repo)), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	_, err = m.ReplyText(c, "<b>Repository starred</b>\n"+utils.Code(owner+"/"+repo), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
@@ -1033,7 +994,7 @@ func (h *CommandHandler) Unstar(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("Removed star from <b>%s/%s</b>.", html.EscapeString(owner), html.EscapeString(repo)), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	_, err = m.ReplyText(c, "<b>Star removed</b>\n"+utils.Code(owner+"/"+repo), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
@@ -1060,7 +1021,7 @@ func (h *CommandHandler) Watch(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("Watching repository <b>%s/%s</b>!", html.EscapeString(owner), html.EscapeString(repo)), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	_, err = m.ReplyText(c, "<b>Repository watched</b>\n"+utils.Code(owner+"/"+repo), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
@@ -1086,7 +1047,7 @@ func (h *CommandHandler) Unwatch(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("Stopped watching <b>%s/%s</b>.", html.EscapeString(owner), html.EscapeString(repo)), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	_, err = m.ReplyText(c, "<b>Repository unwatched</b>\n"+utils.Code(owner+"/"+repo), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
@@ -1112,7 +1073,7 @@ func (h *CommandHandler) Fork(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("Repository forked successfully to <b>%s</b>!", html.EscapeString(forked.GetFullName())), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	_, err = m.ReplyText(c, "<b>Repository forked</b>\n"+utils.Link(forked.GetFullName(), forked.GetHTMLURL()), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
@@ -1139,7 +1100,7 @@ func (h *CommandHandler) Archive(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("Repository <b>%s/%s</b> archived.", html.EscapeString(owner), html.EscapeString(repo)), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	_, err = m.ReplyText(c, "<b>Repository archived</b>\n"+utils.Code(owner+"/"+repo), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
@@ -1166,7 +1127,7 @@ func (h *CommandHandler) Unarchive(c *gotdbot.Client, m *gotdbot.Message) error 
 		return nil
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("Repository <b>%s/%s</b> unarchived.", html.EscapeString(owner), html.EscapeString(repo)), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	_, err = m.ReplyText(c, "<b>Repository unarchived</b>\n"+utils.Code(owner+"/"+repo), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
@@ -1195,12 +1156,12 @@ func (h *CommandHandler) Contributors(c *gotdbot.Client, m *gotdbot.Message) err
 	}
 
 	var msg strings.Builder
-	msg.WriteString(fmt.Sprintf("<b>Top Contributors for %s/%s:</b>\n\n", html.EscapeString(owner), html.EscapeString(repo)))
+	msg.WriteString("<b>Contributors</b>\n" + utils.Code(owner+"/"+repo) + "\n\n")
 	if len(contribs) == 0 {
 		msg.WriteString("No contributors found.")
 	}
 	for i, c := range contribs {
-		msg.WriteString(fmt.Sprintf("%d. <b>%s</b> (%d commits)\n", i+1, html.EscapeString(c.GetLogin()), c.GetContributions()))
+		msg.WriteString(fmt.Sprintf("%d. %s · %d commits\n", i+1, utils.Link(c.GetLogin(), c.GetHTMLURL()), c.GetContributions()))
 	}
 
 	_, err = m.ReplyText(c, utils.LimitHTML(msg.String(), utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
@@ -1235,13 +1196,13 @@ func (h *CommandHandler) Languages(c *gotdbot.Client, m *gotdbot.Message) error 
 	}
 
 	var msg strings.Builder
-	msg.WriteString(fmt.Sprintf("<b>Language Statistics for %s/%s:</b>\n\n", html.EscapeString(owner), html.EscapeString(repo)))
+	msg.WriteString("<b>Languages</b>\n" + utils.Code(owner+"/"+repo) + "\n\n")
 	if total == 0 {
 		msg.WriteString("No languages detected.")
 	} else {
 		for lang, bytes := range langs {
 			pct := (float64(bytes) / float64(total)) * 100.0
-			msg.WriteString(fmt.Sprintf("• <b>%s</b>: %.2f%%\n", html.EscapeString(lang), pct))
+			msg.WriteString(fmt.Sprintf("%s · %.2f%%\n", utils.Code(lang), pct))
 		}
 	}
 
@@ -1274,12 +1235,12 @@ func (h *CommandHandler) Branches(c *gotdbot.Client, m *gotdbot.Message) error {
 	}
 
 	var msg strings.Builder
-	msg.WriteString(fmt.Sprintf("<b>Branches for %s/%s:</b>\n\n", html.EscapeString(owner), html.EscapeString(repo)))
+	msg.WriteString("<b>Branches</b>\n" + utils.Code(owner+"/"+repo) + "\n\n")
 	if len(branches) == 0 {
 		msg.WriteString("No branches found.")
 	}
 	for _, br := range branches {
-		msg.WriteString(fmt.Sprintf("• %s\n", html.EscapeString(br.GetName())))
+		msg.WriteString(utils.Code(br.GetName()) + "\n")
 	}
 
 	_, err = m.ReplyText(c, utils.LimitHTML(msg.String(), utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
@@ -1315,24 +1276,18 @@ func (h *CommandHandler) Branch(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	sha := branch.GetCommit().GetSHA()
-	protected := "No"
+	msg := "<b>Branch</b>\n" + utils.Code(owner+"/"+repo) + "\n\n" + utils.Code(branch.GetName())
 	if branch.GetProtected() {
-		protected = "Yes"
+		msg += " · Protected"
+	} else {
+		msg += " · Unprotected"
 	}
-
-	msg := fmt.Sprintf(
-		"<b>Branch Details (%s/%s):</b>\n\n"+
-			"• <b>Name:</b> %s\n"+
-			"• <b>Protected:</b> %s\n"+
-			"• <b>Last Commit SHA:</b> %s\n"+
-			"• <b>Last Commit Author:</b> %s",
-		html.EscapeString(owner), html.EscapeString(repo),
-		html.EscapeString(branch.GetName()),
-		protected,
-		html.EscapeString(sha),
-		html.EscapeString(branch.GetCommit().GetCommit().GetAuthor().GetName()),
-	)
+	if commit := branch.GetCommit(); commit.GetSHA() != "" {
+		msg += "\nLatest commit: " + utils.Link(utils.ShortSHA(commit.GetSHA()), commit.GetHTMLURL())
+		if author := commit.GetCommit().GetAuthor().GetName(); author != "" {
+			msg += " by " + html.EscapeString(author)
+		}
+	}
 
 	_, err = m.ReplyText(c, utils.LimitHTML(msg, utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
@@ -1368,7 +1323,7 @@ func (h *CommandHandler) Default(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	_, err = m.ReplyText(c, utils.LimitHTML(fmt.Sprintf("Default branch for <b>%s/%s</b> changed to <b>%s</b>.", html.EscapeString(owner), html.EscapeString(repo), html.EscapeString(branchName)), utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	_, err = m.ReplyText(c, utils.LimitHTML("<b>Default branch updated</b>\n"+utils.Code(owner+"/"+repo)+"\n\n"+utils.Code(branchName), utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
@@ -1429,7 +1384,7 @@ func (h *CommandHandler) Issue(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	_, err = m.ReplyText(c, utils.LimitHTML(fmt.Sprintf("Created issue <b>#%d</b>: <a href=\"%s\">%s</a>", issue.GetNumber(), html.EscapeString(issue.GetHTMLURL()), html.EscapeString(issue.GetTitle()))+"\n\nRepository: "+utils.Code(owner+"/"+repo), utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	_, err = m.ReplyText(c, utils.LimitHTML("<b>Issue created</b>\n"+utils.Link(fmt.Sprintf("#%d %s", issue.GetNumber(), issue.GetTitle()), issue.GetHTMLURL())+"\n"+utils.Code(owner+"/"+repo), utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
@@ -1477,7 +1432,7 @@ func (h *CommandHandler) Comment(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("Comment added to <b>#%d</b>: <a href=\"%s\">View</a>", num, html.EscapeString(comment.GetHTMLURL()))+"\n\nRepository: "+utils.Code(owner+"/"+repo), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	_, err = m.ReplyText(c, "<b>Comment posted</b>\n"+utils.Link(fmt.Sprintf("#%d", num), comment.GetHTMLURL())+"\n"+utils.Code(owner+"/"+repo), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
@@ -1516,7 +1471,7 @@ func (h *CommandHandler) Assign(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	_, err = m.ReplyText(c, utils.LimitHTML(fmt.Sprintf("Assigned <b>@%s</b> to #%d.", html.EscapeString(target), num)+"\n\nRepository: "+utils.Code(owner+"/"+repo), utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	_, err = m.ReplyText(c, utils.LimitHTML("<b>Assignee added</b>\n"+utils.Code("@"+target)+fmt.Sprintf(" · #%d", num)+"\n"+utils.Code(owner+"/"+repo), utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
@@ -1556,7 +1511,7 @@ func (h *CommandHandler) AssignMe(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("Assigned you (<b>@%s</b>) to #%d.", html.EscapeString(target), num)+"\n\nRepository: "+utils.Code(owner+"/"+repo), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	_, err = m.ReplyText(c, "<b>Assigned to you</b>\n"+utils.Code("@"+target)+fmt.Sprintf(" · #%d", num)+"\n"+utils.Code(owner+"/"+repo), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
@@ -1595,7 +1550,7 @@ func (h *CommandHandler) Unassign(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	_, err = m.ReplyText(c, utils.LimitHTML(fmt.Sprintf("Unassigned <b>@%s</b> from #%d.", html.EscapeString(target), num)+"\n\nRepository: "+utils.Code(owner+"/"+repo), utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	_, err = m.ReplyText(c, utils.LimitHTML("<b>Assignee removed</b>\n"+utils.Code("@"+target)+fmt.Sprintf(" · #%d", num)+"\n"+utils.Code(owner+"/"+repo), utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
@@ -1658,7 +1613,7 @@ func (h *CommandHandler) Label(c *gotdbot.Client, m *gotdbot.Message) error {
 		}
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("Labels updated for #%d.", num)+"\nRepository: "+owner+"/"+repo, nil)
+	_, err = m.ReplyText(c, "<b>Labels updated</b>\n"+utils.Code(fmt.Sprintf("%s/%s #%d", owner, repo, num)), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
@@ -1693,16 +1648,16 @@ func (h *CommandHandler) Labels(c *gotdbot.Client, m *gotdbot.Message) error {
 
 	var msg strings.Builder
 	if num > 0 {
-		msg.WriteString(fmt.Sprintf("<b>Labels for #%d:</b>\n\n", num))
+		msg.WriteString("<b>Labels</b>\n" + utils.Code(fmt.Sprintf("%s/%s #%d", owner, repo, num)) + "\n\n")
 	} else {
-		msg.WriteString(fmt.Sprintf("<b>Labels for %s/%s:</b>\n\n", html.EscapeString(owner), html.EscapeString(repo)))
+		msg.WriteString("<b>Labels</b>\n" + utils.Code(owner+"/"+repo) + "\n\n")
 	}
 
 	if len(labels) == 0 {
 		msg.WriteString("No labels found.")
 	} else {
 		for _, l := range labels {
-			msg.WriteString(fmt.Sprintf("• %s\n", html.EscapeString(l.GetName())))
+			msg.WriteString(utils.Code(l.GetName()) + "\n")
 		}
 	}
 
@@ -1766,7 +1721,7 @@ func (h *CommandHandler) Milestone(c *gotdbot.Client, m *gotdbot.Message) error 
 		return nil
 	}
 
-	_, err = m.ReplyText(c, utils.LimitHTML(fmt.Sprintf("Assigned milestone <b>%s</b> to #%d.", html.EscapeString(mName), num)+"\n\nRepository: "+utils.Code(owner+"/"+repo), utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	_, err = m.ReplyText(c, utils.LimitHTML("<b>Milestone assigned</b>\n"+utils.Code(mName)+fmt.Sprintf(" · #%d", num)+"\n"+utils.Code(owner+"/"+repo), utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
@@ -1798,7 +1753,7 @@ func (h *CommandHandler) Lock(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("Locked conversation on #%d.", num)+"\nRepository: "+owner+"/"+repo, nil)
+	_, err = m.ReplyText(c, "<b>Conversation locked</b>\n"+utils.Code(fmt.Sprintf("%s/%s #%d", owner, repo, num)), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
@@ -1830,7 +1785,7 @@ func (h *CommandHandler) Unlock(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("Unlocked conversation on #%d.", num)+"\nRepository: "+owner+"/"+repo, nil)
+	_, err = m.ReplyText(c, "<b>Conversation unlocked</b>\n"+utils.Code(fmt.Sprintf("%s/%s #%d", owner, repo, num)), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
@@ -1866,7 +1821,7 @@ func (h *CommandHandler) Pin(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("Pinned issue #%d.", num)+"\nRepository: "+owner+"/"+repo, nil)
+	_, err = m.ReplyText(c, "<b>Issue pinned</b>\n"+utils.Code(fmt.Sprintf("%s/%s #%d", owner, repo, num)), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
@@ -1902,7 +1857,7 @@ func (h *CommandHandler) Unpin(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("Unpinned issue #%d.", num)+"\nRepository: "+owner+"/"+repo, nil)
+	_, err = m.ReplyText(c, "<b>Issue unpinned</b>\n"+utils.Code(fmt.Sprintf("%s/%s #%d", owner, repo, num)), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
@@ -1965,7 +1920,7 @@ func (h *CommandHandler) RequestChanges(c *gotdbot.Client, m *gotdbot.Message) e
 		return nil
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("Requested changes on PR #%d.", num)+"\nRepository: "+owner+"/"+repo, nil)
+	_, err = m.ReplyText(c, "<b>Changes requested</b>\n"+utils.Code(fmt.Sprintf("%s/%s #%d", owner, repo, num)), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
@@ -2013,7 +1968,7 @@ func (h *CommandHandler) Merge(c *gotdbot.Client, m *gotdbot.Message) error {
 		_, err = m.ReplyText(c, "Pull request was not merged. Check merge requirements on GitHub, then try again.", nil)
 		return err
 	}
-	_, err = m.ReplyText(c, fmt.Sprintf("Merged PR #%d using strategy: <b>%s</b>.", num, method)+"\n\nRepository: "+utils.Code(owner+"/"+repo), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	_, err = m.ReplyText(c, fmt.Sprintf("<b>Pull request merged</b>\n#%d · %s", num, utils.Code(method))+"\n"+utils.Code(owner+"/"+repo), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
@@ -2055,7 +2010,7 @@ func (h *CommandHandler) Draft(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("PR #%d converted to Draft.", num)+"\nRepository: "+owner+"/"+repo, nil)
+	_, err = m.ReplyText(c, "<b>Pull request marked as draft</b>\n"+utils.Code(fmt.Sprintf("%s/%s #%d", owner, repo, num)), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
@@ -2097,7 +2052,7 @@ func (h *CommandHandler) Ready(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("PR #%d marked as Ready for Review.", num)+"\nRepository: "+owner+"/"+repo, nil)
+	_, err = m.ReplyText(c, "<b>Pull request ready for review</b>\n"+utils.Code(fmt.Sprintf("%s/%s #%d", owner, repo, num)), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
@@ -2148,7 +2103,7 @@ func (h *CommandHandler) Checks(c *gotdbot.Client, m *gotdbot.Message) error {
 	}
 
 	var msg strings.Builder
-	msg.WriteString(fmt.Sprintf("<b>Checks status for commit %s:</b>\n\n", html.EscapeString(utils.ShortSHA(sha))))
+	msg.WriteString("<b>Checks</b>\n" + utils.Code(owner+"/"+repo) + " · " + utils.Code(utils.ShortSHA(sha)) + "\n\n")
 	if checks.GetTotal() == 0 {
 		msg.WriteString("No check runs found.")
 	} else {
@@ -2157,9 +2112,9 @@ func (h *CommandHandler) Checks(c *gotdbot.Client, m *gotdbot.Message) error {
 			conclusion := run.GetConclusion()
 			summary := status
 			if conclusion != "" {
-				summary += " · " + conclusion
+				summary = conclusion
 			}
-			msg.WriteString(fmt.Sprintf("• %s: %s\n", utils.Link(run.GetName(), run.GetHTMLURL()), html.EscapeString(summary)))
+			msg.WriteString(fmt.Sprintf("• %s: %s\n", utils.Link(run.GetName(), run.GetHTMLURL()), html.EscapeString(strings.ReplaceAll(summary, "_", " "))))
 		}
 	}
 
@@ -2196,12 +2151,12 @@ func (h *CommandHandler) Files(c *gotdbot.Client, m *gotdbot.Message) error {
 	}
 
 	var msg strings.Builder
-	msg.WriteString(fmt.Sprintf("<b>Changed files in PR #%d:</b>\n\n", num))
+	msg.WriteString("<b>Changed files</b>\n" + utils.Code(fmt.Sprintf("%s/%s #%d", owner, repo, num)) + "\n\n")
 	if len(files) == 0 {
 		msg.WriteString("No changed files found.")
 	}
 	for _, f := range files {
-		msg.WriteString(fmt.Sprintf("• %s (<b>+%d</b> / <b>-%d</b>)\n", html.EscapeString(f.GetFilename()), f.GetAdditions(), f.GetDeletions()))
+		msg.WriteString(fmt.Sprintf("%s · +%d / -%d\n", utils.Code(f.GetFilename()), f.GetAdditions(), f.GetDeletions()))
 	}
 
 	_, err = m.ReplyText(c, utils.LimitHTML(msg.String(), utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
@@ -2236,13 +2191,8 @@ func (h *CommandHandler) Diff(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	msg := fmt.Sprintf(
-		"<b>PR #%d Change Summary:</b>\n\n"+
-			"<b>%d</b> files changed\n"+
-			"<b>+%d</b> additions\n"+
-			"<b>-%d</b> deletions",
-		num, pr.GetChangedFiles(), pr.GetAdditions(), pr.GetDeletions(),
-	)
+	msg := "<b>" + utils.Link("Pull request changes", pr.GetHTMLURL()) + "</b>\n" + utils.Code(fmt.Sprintf("%s/%s #%d", owner, repo, num))
+	msg += fmt.Sprintf("\n\n%d files changed · +%d / -%d", pr.GetChangedFiles(), pr.GetAdditions(), pr.GetDeletions())
 
 	_, err = m.ReplyText(c, utils.LimitHTML(msg, utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
@@ -2277,12 +2227,16 @@ func (h *CommandHandler) Reviews(c *gotdbot.Client, m *gotdbot.Message) error {
 	}
 
 	var msg strings.Builder
-	msg.WriteString(fmt.Sprintf("<b>Review status for PR #%d:</b>\n\n", num))
+	msg.WriteString("<b>Reviews</b>\n" + utils.Code(fmt.Sprintf("%s/%s #%d", owner, repo, num)) + "\n\n")
 	if len(reviews) == 0 {
 		msg.WriteString("No reviews submitted yet.")
 	} else {
 		for _, r := range reviews {
-			msg.WriteString(fmt.Sprintf("• <b>%s</b>: %s (%s)\n", html.EscapeString(r.GetUser().GetLogin()), html.EscapeString(r.GetState()), html.EscapeString(r.GetSubmittedAt().Format("2006-01-02 15:04"))))
+			msg.WriteString(fmt.Sprintf("%s · %s", utils.Link(r.GetUser().GetLogin(), r.GetHTMLURL()), html.EscapeString(strings.ToLower(strings.ReplaceAll(r.GetState(), "_", " ")))))
+			if submitted := r.GetSubmittedAt(); !submitted.IsZero() {
+				msg.WriteString(" · " + submitted.Format("2006-01-02 15:04 UTC"))
+			}
+			msg.WriteByte('\n')
 		}
 	}
 
@@ -2320,17 +2274,15 @@ func (h *CommandHandler) Mergeable(c *gotdbot.Client, m *gotdbot.Message) error 
 
 	status := "No conflicts"
 	if pr.Mergeable != nil && !*pr.Mergeable {
-		status = "Has conflicts "
+		status = "Has conflicts"
 	} else if pr.Mergeable == nil {
-		status = "Unknown / Checking..."
+		status = "GitHub is checking mergeability. Try again shortly."
 	}
 
-	msg := fmt.Sprintf(
-		"<b>Merge Status for PR #%d:</b>\n\n"+
-			"• <b>Mergeable:</b> %s\n"+
-			"• <b>Mergeable State:</b> %s",
-		num, status, html.EscapeString(pr.GetMergeableState()),
-	)
+	msg := "<b>Merge status</b>\n" + utils.Code(fmt.Sprintf("%s/%s #%d", owner, repo, num)) + "\n\n" + status
+	if state := pr.GetMergeableState(); state != "" {
+		msg += "\n" + html.EscapeString(strings.ReplaceAll(state, "_", " "))
+	}
 
 	_, err = m.ReplyText(c, utils.LimitHTML(msg, utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
@@ -2373,7 +2325,7 @@ func (h *CommandHandler) RequestReview(c *gotdbot.Client, m *gotdbot.Message) er
 		return nil
 	}
 
-	_, err = m.ReplyText(c, utils.LimitHTML(fmt.Sprintf("Review requested from <b>@%s</b> for PR #%d.", html.EscapeString(target), num)+"\n\nRepository: "+utils.Code(owner+"/"+repo), utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	_, err = m.ReplyText(c, utils.LimitHTML("<b>Review requested</b>\n"+utils.Code("@"+target)+fmt.Sprintf(" · #%d", num)+"\n"+utils.Code(owner+"/"+repo), utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
@@ -2406,18 +2358,11 @@ func (h *CommandHandler) Commit(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	msg := fmt.Sprintf(
-		"<b>Commit Details (%s/%s):</b>\n\n"+
-			"• <b>SHA:</b> %s\n"+
-			"• <b>Author:</b> %s\n"+
-			"• <b>Message:</b> %s\n"+
-			"• <b>HTML URL:</b> %s",
-		html.EscapeString(owner), html.EscapeString(repo),
-		html.EscapeString(commit.GetSHA()),
-		html.EscapeString(commit.GetCommit().GetAuthor().GetName()),
-		html.EscapeString(commit.GetCommit().GetMessage()),
-		utils.Link("View commit", commit.GetHTMLURL()),
-	)
+	msg := "<b>" + utils.Link("Commit "+utils.ShortSHA(commit.GetSHA()), commit.GetHTMLURL()) + "</b>\n" + utils.Code(owner+"/"+repo)
+	if author := commit.GetCommit().GetAuthor().GetName(); author != "" {
+		msg += " · by " + html.EscapeString(author)
+	}
+	msg += "\n\n" + html.EscapeString(commit.GetCommit().GetMessage())
 
 	_, err = m.ReplyText(c, utils.LimitHTML(msg, utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
@@ -2448,16 +2393,17 @@ func (h *CommandHandler) Commits(c *gotdbot.Client, m *gotdbot.Message) error {
 	}
 
 	var msg strings.Builder
-	msg.WriteString(fmt.Sprintf("<b>Recent Commits in %s/%s:</b>\n\n", html.EscapeString(owner), html.EscapeString(repo)))
+	msg.WriteString("<b>Recent commits</b>\n" + utils.Code(owner+"/"+repo) + "\n\n")
 	if len(commits) == 0 {
 		msg.WriteString("No commits found.")
 	}
 	for _, c := range commits {
-		shortSHA := c.GetSHA()
-		if len(shortSHA) > 7 {
-			shortSHA = shortSHA[:7]
+		shortSHA := utils.ShortSHA(c.GetSHA())
+		msg.WriteString(fmt.Sprintf("- %s: %s", utils.Link(shortSHA, c.GetHTMLURL()), html.EscapeString(strings.Split(c.GetCommit().GetMessage(), "\n")[0])))
+		if author := c.GetCommit().GetAuthor().GetName(); author != "" {
+			msg.WriteString(" by " + html.EscapeString(author))
 		}
-		msg.WriteString(fmt.Sprintf("• <code>%s</code> - %s by <b>%s</b>\n", html.EscapeString(shortSHA), html.EscapeString(strings.Split(c.GetCommit().GetMessage(), "\n")[0]), html.EscapeString(c.GetCommit().GetAuthor().GetName())))
+		msg.WriteByte('\n')
 	}
 
 	_, err = m.ReplyText(c, utils.LimitHTML(msg.String(), utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
@@ -2494,21 +2440,8 @@ func (h *CommandHandler) Compare(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	msg := fmt.Sprintf(
-		"<b>Comparison: %s...%s (%s/%s):</b>\n\n"+
-			"• <b>Status:</b> %s\n"+
-			"• <b>Ahead By:</b> %d\n"+
-			"• <b>Behind By:</b> %d\n"+
-			"• <b>Total Commits:</b> %d\n"+
-			"• <b>Comparison URL:</b> %s",
-		html.EscapeString(base), html.EscapeString(head),
-		html.EscapeString(owner), html.EscapeString(repo),
-		html.EscapeString(comp.GetStatus()),
-		comp.GetAheadBy(),
-		comp.GetBehindBy(),
-		comp.GetTotalCommits(),
-		utils.Link("View comparison", comp.GetHTMLURL()),
-	)
+	msg := "<b>" + utils.Link("Branch comparison", comp.GetHTMLURL()) + "</b>\n" + utils.Code(owner+"/"+repo) + "\n\n" + utils.Code(base) + " → " + utils.Code(head)
+	msg += fmt.Sprintf("\n%s\n%d ahead · %d behind · %d commits", html.EscapeString(comp.GetStatus()), comp.GetAheadBy(), comp.GetBehindBy(), comp.GetTotalCommits())
 
 	_, err = m.ReplyText(c, utils.LimitHTML(msg, utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
@@ -2539,7 +2472,7 @@ func (h *CommandHandler) Actions(c *gotdbot.Client, m *gotdbot.Message) error {
 	}
 
 	var msg strings.Builder
-	msg.WriteString(fmt.Sprintf("<b>Recent Workflow Runs for %s/%s:</b>\n\n", html.EscapeString(owner), html.EscapeString(repo)))
+	msg.WriteString("<b>Workflow runs</b>\n" + utils.Code(owner+"/"+repo) + "\n\n")
 	if runs.GetTotalCount() == 0 {
 		msg.WriteString("No workflow runs found.")
 	} else {
@@ -2548,9 +2481,9 @@ func (h *CommandHandler) Actions(c *gotdbot.Client, m *gotdbot.Message) error {
 			conclusion := run.GetConclusion()
 			summary := status
 			if conclusion != "" {
-				summary += " · " + conclusion
+				summary = conclusion
 			}
-			msg.WriteString(fmt.Sprintf("• %s #%d: %s\n", utils.Link(run.GetName(), run.GetHTMLURL()), run.GetRunNumber(), html.EscapeString(summary)))
+			msg.WriteString(fmt.Sprintf("%s\n%s · %s\n\n", utils.Link(fmt.Sprintf("%s #%d", run.GetName(), run.GetRunNumber()), run.GetHTMLURL()), utils.Code(run.GetHeadBranch()), html.EscapeString(strings.ReplaceAll(summary, "_", " "))))
 		}
 	}
 
@@ -2605,7 +2538,7 @@ func (h *CommandHandler) RunWorkflow(c *gotdbot.Client, m *gotdbot.Message) erro
 		return nil
 	}
 
-	_, err = m.ReplyText(c, utils.LimitHTML(fmt.Sprintf("Triggered workflow <b>%s</b> on branch <b>%s</b>.", html.EscapeString(workflowFile), html.EscapeString(ref))+"\n\nRepository: "+utils.Code(owner+"/"+repo), utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	_, err = m.ReplyText(c, utils.LimitHTML("<b>Workflow dispatch requested</b>\n"+utils.Code(workflowFile)+" · "+utils.Code(ref)+"\n"+utils.Code(owner+"/"+repo), utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
@@ -2637,7 +2570,7 @@ func (h *CommandHandler) RerunWorkflow(c *gotdbot.Client, m *gotdbot.Message) er
 		return nil
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("Workflow run #%d rerunning.", num)+"\nRepository: "+owner+"/"+repo, nil)
+	_, err = m.ReplyText(c, "<b>Workflow rerun requested</b>\n"+utils.Code(owner+"/"+repo)+"\nRun ID: "+utils.Code(strconv.FormatInt(num, 10)), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
@@ -2669,7 +2602,7 @@ func (h *CommandHandler) CancelWorkflow(c *gotdbot.Client, m *gotdbot.Message) e
 		return nil
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("Workflow run #%d cancelled.", num)+"\nRepository: "+owner+"/"+repo, nil)
+	_, err = m.ReplyText(c, "<b>Workflow cancellation requested</b>\n"+utils.Code(owner+"/"+repo)+"\nRun ID: "+utils.Code(strconv.FormatInt(num, 10)), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
@@ -2701,7 +2634,7 @@ func (h *CommandHandler) WorkflowLogs(c *gotdbot.Client, m *gotdbot.Message) err
 		return nil
 	}
 
-	msg := fmt.Sprintf("<a href=\"%s\">Open workflow logs for run #%d</a>", html.EscapeString(run.GetHTMLURL()+"/jobs"), num)
+	msg := "<b>Workflow logs</b>\n" + utils.Code(owner+"/"+repo) + "\n\n" + utils.Link(fmt.Sprintf("%s #%d", run.GetName(), run.GetRunNumber()), run.GetHTMLURL())
 	_, err = m.ReplyText(c, msg, &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
@@ -2742,7 +2675,7 @@ func (h *CommandHandler) Release(c *gotdbot.Client, m *gotdbot.Message) error {
 			return nil
 		}
 
-		_, err = m.ReplyText(c, utils.LimitHTML(fmt.Sprintf("Created release <b>%s</b>: <a href=\"%s\">View Release</a>", html.EscapeString(rel.GetTagName()), html.EscapeString(rel.GetHTMLURL()))+"\n\nRepository: "+utils.Code(owner+"/"+repo), utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+		_, err = m.ReplyText(c, utils.LimitHTML("<b>Release created</b>\n"+utils.Link(rel.GetTagName(), rel.GetHTMLURL())+"\n"+utils.Code(owner+"/"+repo), utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 		return err
 	}
 
@@ -2761,17 +2694,14 @@ func (h *CommandHandler) Release(c *gotdbot.Client, m *gotdbot.Message) error {
 		name = rel.GetName()
 	}
 
-	msg := fmt.Sprintf(
-		"<b>Latest release</b>\n\n"+
-			"<b>Repository:</b> %s\n"+
-			"<b>Name:</b> %s\n"+
-			"<b>Tag:</b> %s",
-		utils.Code(owner+"/"+repo), html.EscapeString(utils.Clip(name, 240)), utils.Code(utils.Clip(rel.GetTagName(), 160)),
-	)
-	if published := rel.GetPublishedAt(); !published.IsZero() {
-		msg += "\n<b>Published:</b> " + published.Format("2006-01-02 15:04 UTC")
+	msg := "<b>" + utils.Link(name, rel.GetHTMLURL()) + "</b>\n" + utils.Code(owner+"/"+repo)
+	if tag := rel.GetTagName(); tag != "" && tag != name {
+		msg += " · " + utils.Code(tag)
 	}
-	msg += "\n\n" + utils.Link("View release on GitHub", rel.GetHTMLURL())
+	msg += "\nLatest release"
+	if published := rel.GetPublishedAt(); !published.IsZero() {
+		msg += " · " + published.Format("2006-01-02 15:04 UTC")
+	}
 
 	if body := rel.GetBody(); strings.TrimSpace(body) != "" {
 		richMarkdown := "<p>" + strings.ReplaceAll(msg, "\n", "<br>") + "</p>\n\n" + utils.Clip(body, 8000)
@@ -2815,7 +2745,7 @@ func (h *CommandHandler) Changelog(c *gotdbot.Client, m *gotdbot.Message) error 
 		return nil
 	}
 
-	header := "<b>Generated changelog</b>\n\n<b>Repository:</b> " + utils.Code(owner+"/"+repo) + "\n<b>Tag:</b> " + utils.Code(utils.Clip(tagName, 160)) + "\n\n" + utils.Link("View releases on GitHub", "https://github.com/"+owner+"/"+repo+"/releases")
+	header := "<b>Generated changelog</b>\n" + utils.Code(owner+"/"+repo) + " · " + utils.Code(utils.Clip(tagName, 160)) + "\n\n" + utils.Link("View releases on GitHub", "https://github.com/"+owner+"/"+repo+"/releases")
 	if strings.TrimSpace(notes.GetBody()) == "" {
 		_, err = m.ReplyRichMessageHTML(c, "<p>"+strings.ReplaceAll(header, "\n", "<br>")+"</p><p>GitHub returned no release notes for this tag.</p>", nil)
 		return err
@@ -2979,7 +2909,7 @@ func (h *CommandHandler) CreateDiscussion(c *gotdbot.Client, m *gotdbot.Message)
 		_, err = m.ReplyText(c, "GitHub did not confirm discussion creation. Check the repository before trying again.", nil)
 		return err
 	}
-	_, err = m.ReplyText(c, fmt.Sprintf("Created discussion <b>#%d</b>: <a href=\"%s\">View Discussion</a>", disc.Number, html.EscapeString(disc.URL))+"\n\nRepository: "+utils.Code(owner+"/"+repo), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	_, err = m.ReplyText(c, "<b>Discussion created</b>\n"+utils.Link(fmt.Sprintf("#%d", disc.Number), disc.URL)+"\n"+utils.Code(owner+"/"+repo), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
@@ -3117,7 +3047,7 @@ func (h *CommandHandler) Answered(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	_, err = m.ReplyText(c, "Discussion marked as answered!", nil)
+	_, err = m.ReplyText(c, "<b>Discussion answered</b>\n"+utils.Code(owner+"/"+repo), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
@@ -3154,7 +3084,7 @@ func (h *CommandHandler) Find(c *gotdbot.Client, m *gotdbot.Message) error {
 	}
 
 	var msg strings.Builder
-	msg.WriteString(fmt.Sprintf("<b>Search Issues results for '%s':</b>\n\n", html.EscapeString(keyword)))
+	msg.WriteString("<b>Search issues</b>\n" + utils.Code(owner+"/"+repo) + "\nQuery: " + utils.Code(keyword) + "\n\n")
 	if result.GetTotal() == 0 {
 		msg.WriteString("No issues found.")
 	} else {
@@ -3200,7 +3130,7 @@ func (h *CommandHandler) PRSearch(c *gotdbot.Client, m *gotdbot.Message) error {
 	}
 
 	var msg strings.Builder
-	msg.WriteString(fmt.Sprintf("<b>Search Pull Requests results for '%s':</b>\n\n", html.EscapeString(keyword)))
+	msg.WriteString("<b>Search pull requests</b>\n" + utils.Code(owner+"/"+repo) + "\nQuery: " + utils.Code(keyword) + "\n\n")
 	if result.GetTotal() == 0 {
 		msg.WriteString("No PRs found.")
 	} else {
@@ -3246,7 +3176,7 @@ func (h *CommandHandler) SearchCode(c *gotdbot.Client, m *gotdbot.Message) error
 	}
 
 	var msg strings.Builder
-	msg.WriteString(fmt.Sprintf("<b>Search Code results for '%s':</b>\n\n", html.EscapeString(keyword)))
+	msg.WriteString("<b>Search code</b>\n" + utils.Code(owner+"/"+repo) + "\nQuery: " + utils.Code(keyword) + "\n\n")
 	if result.GetTotal() == 0 {
 		msg.WriteString("No code results found.")
 	} else {
@@ -3333,7 +3263,7 @@ func (h *CommandHandler) Done(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	_, err = m.ReplyText(c, "Marked notification as done.", nil)
+	_, err = m.ReplyText(c, "<b>Notification marked as done</b>\n"+utils.Code(fmt.Sprintf("%s/%s #%d", owner, repo, num)), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
@@ -3368,7 +3298,7 @@ func (h *CommandHandler) Read(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	_, err = m.ReplyText(c, "Marked notification as read.", nil)
+	_, err = m.ReplyText(c, "<b>Notification marked as read</b>\n"+utils.Code(fmt.Sprintf("%s/%s #%d", owner, repo, num)), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
@@ -3426,38 +3356,25 @@ func (h *CommandHandler) Stats(c *gotdbot.Client, m *gotdbot.Message) error {
 		c.Logger.Warnf("Fetch contributors: %s", utils.ErrorDetails(contribErr))
 	}
 
-	latestRelease := "N/A"
+	latestRelease := "Unavailable"
 	rel, _, relErr := client.Repositories.GetLatestRelease(context.Background(), owner, repo)
 	if relErr == nil {
-		latestRelease = rel.GetTagName()
+		latestRelease = utils.Link(rel.GetTagName(), rel.GetHTMLURL())
 	}
 
-	lastCommit := "N/A"
+	lastCommit := "Unavailable"
 	commits, _, commitErr := client.Repositories.ListCommits(context.Background(), owner, repo, &github.CommitsListOptions{
 		PerPage: 1,
 	})
 	if commitErr == nil && len(commits) > 0 {
-		lastCommit = fmt.Sprintf("%s (by %s)", utils.ShortSHA(commits[0].GetSHA()), commits[0].GetCommit().GetAuthor().GetName())
+		lastCommit = utils.Link(utils.ShortSHA(commits[0].GetSHA()), commits[0].GetHTMLURL())
+		if author := commits[0].GetCommit().GetAuthor().GetName(); author != "" {
+			lastCommit += " by " + html.EscapeString(author)
+		}
 	}
 
-	msg := fmt.Sprintf(
-		"<b>Repository Statistics for %s/%s:</b>\n\n"+
-			"<b>Stars:</b> %d\n"+
-			"<b>Forks:</b> %d\n"+
-			"<b>Open Issues:</b> %s\n"+
-			"<b>Open PRs:</b> %s\n"+
-			"<b>Contributors (first 100):</b> %s\n"+
-			"<b>Latest Release:</b> %s\n"+
-			"<b>Last Commit:</b> %s",
-		html.EscapeString(owner), html.EscapeString(repo),
-		repoInfo.GetStargazersCount(),
-		repoInfo.GetForksCount(),
-		openIssuesText,
-		openPRsText,
-		contribsCount,
-		html.EscapeString(latestRelease),
-		html.EscapeString(lastCommit),
-	)
+	msg := "<b>Repository statistics</b>\n" + utils.Link(owner+"/"+repo, repoInfo.GetHTMLURL())
+	msg += fmt.Sprintf("\n\n%d stars · %d forks\n%s open issues · %s open pull requests\nContributors (first 100): %s\nLatest release: %s\nLatest commit: %s", repoInfo.GetStargazersCount(), repoInfo.GetForksCount(), openIssuesText, openPRsText, contribsCount, latestRelease, lastCommit)
 
 	_, err = m.ReplyText(c, utils.LimitHTML(msg, utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
@@ -3486,14 +3403,21 @@ func (h *CommandHandler) Activity(c *gotdbot.Client, m *gotdbot.Message) error {
 	}
 
 	var msg strings.Builder
-	msg.WriteString(fmt.Sprintf("<b>Recent Activity in %s/%s:</b>\n\n", html.EscapeString(owner), html.EscapeString(repo)))
+	msg.WriteString("<b>Recent activity</b>\n" + utils.Code(owner+"/"+repo) + "\n\n")
 	if len(events) == 0 {
 		msg.WriteString("No recent activity found.")
 	} else {
 		for _, e := range events {
 			evtType := e.GetType()
 			evtType = strings.TrimSuffix(evtType, "Event")
-			msg.WriteString(fmt.Sprintf("• <b>%s</b> by %s (%s)\n", html.EscapeString(evtType), html.EscapeString(e.GetActor().GetLogin()), e.GetCreatedAt().Format("2006-01-02 15:04")))
+			msg.WriteString(html.EscapeString(evtType))
+			if actor := e.GetActor(); actor.GetLogin() != "" {
+				msg.WriteString(" · " + utils.Link(actor.GetLogin(), actor.GetHTMLURL()))
+			}
+			if created := e.GetCreatedAt(); !created.IsZero() {
+				msg.WriteString("\n" + created.Format("2006-01-02 15:04 UTC"))
+			}
+			msg.WriteString("\n\n")
 		}
 	}
 
