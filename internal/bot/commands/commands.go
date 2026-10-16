@@ -1422,7 +1422,7 @@ func (h *CommandHandler) Comment(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	comment, _, err := client.Issues.CreateComment(context.Background(), owner, repo, num, github.IssueCommentRequest{Body: body})
+	_, _, err = client.Issues.CreateComment(context.Background(), owner, repo, num, github.IssueCommentRequest{Body: body})
 	if err != nil {
 		if h.handleAuthError(c, m, err) {
 			return nil
@@ -1432,8 +1432,7 @@ func (h *CommandHandler) Comment(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	_, err = m.ReplyText(c, "<b>Comment posted</b>\n"+utils.Link(fmt.Sprintf("#%d", num), comment.GetHTMLURL())+"\n"+utils.Code(owner+"/"+repo), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
-	return err
+	return nil
 }
 
 func (h *CommandHandler) Assign(c *gotdbot.Client, m *gotdbot.Message) error {
@@ -2704,7 +2703,7 @@ func (h *CommandHandler) Release(c *gotdbot.Client, m *gotdbot.Message) error {
 	}
 
 	if body := rel.GetBody(); strings.TrimSpace(body) != "" {
-		richMarkdown := "<p>" + strings.ReplaceAll(msg, "\n", "<br>") + "</p>\n\n" + utils.Clip(body, 8000)
+		richMarkdown := "<p>" + strings.ReplaceAll(msg, "\n", "<br>") + "</p>\n\n" + utils.GitHubMarkdown(utils.Clip(body, 8000), "https://github.com/"+owner+"/"+repo)
 		_, err = m.ReplyRichMessageMarkdown(c, richMarkdown, nil)
 		return err
 	}
@@ -2750,7 +2749,7 @@ func (h *CommandHandler) Changelog(c *gotdbot.Client, m *gotdbot.Message) error 
 		_, err = m.ReplyRichMessageHTML(c, "<p>"+strings.ReplaceAll(header, "\n", "<br>")+"</p><p>GitHub returned no release notes for this tag.</p>", nil)
 		return err
 	}
-	richMarkdown := "<p>" + strings.ReplaceAll(header, "\n", "<br>") + "</p>\n\n" + utils.Clip(notes.GetBody(), 8000)
+	richMarkdown := "<p>" + strings.ReplaceAll(header, "\n", "<br>") + "</p>\n\n" + utils.GitHubMarkdown(utils.Clip(notes.GetBody(), 8000), "https://github.com/"+owner+"/"+repo)
 	_, err = m.ReplyRichMessageMarkdown(c, richMarkdown, nil)
 	return err
 }

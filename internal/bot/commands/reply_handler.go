@@ -102,6 +102,5 @@ func (h *ReplyHandler) HandleReply(c *gotdbot.Client, msg *gotdbot.Message) erro
 		return nil
 	}
 
-	_, err = msg.ReplyText(c, "<b>Comment posted</b>\n"+utils.Code(fmt.Sprintf("%s/%s #%d", mContext.Owner, mContext.Repo, mContext.IssueNumber)), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
-	return err
+	return nil
 }

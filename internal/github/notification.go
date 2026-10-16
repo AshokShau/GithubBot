@@ -470,7 +470,7 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 	header = "<p>" + strings.ReplaceAll(header, "\n", "<br>") + "</p>"
 	message := &gotdbot.InputRichMessage{Source: &gotdbot.RichMessageSourceHtml{Text: header}}
 	if strings.TrimSpace(excerpt) != "" {
-		message.Source = &gotdbot.RichMessageSourceMarkdown{Text: header + "\n\n" + utils.Clip(excerpt, 8000)}
+		message.Source = &gotdbot.RichMessageSourceMarkdown{Text: header + "\n\n" + utils.GitHubMarkdown(utils.Clip(excerpt, 8000), repoURL)}
 	}
 
 	if targetURL == "" {
