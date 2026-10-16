@@ -157,28 +157,44 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 	}
 	hookID, _ := strconv.ParseInt(r.Header.Get("X-GitHub-Hook-ID"), 10, 64)
 	deliveryID := r.Header.Get("X-GitHub-Delivery")
+	deliveryLogger := s.Bot.Logger.With("event", eventType, "chat_id", chatID, "topic_id", topicID, "hook_id", hookID, "delivery_id", fmt.Sprintf("%q", utils.Clip(deliveryID, 100)))
 	key := fmt.Sprintf("%d:%d:%d:%s", chatID, topicID, hookID, deliveryID)
 	if deliveryID != "" {
 		state := s.beginDelivery(key)
 		if state == deliveryDone {
-			w.WriteHeader(http.StatusOK)
+			deliveryLogger.Info("Webhook skipped: notification already sent", "result", "duplicate")
+			w.Header().Set("X-Webhook-Result", "duplicate")
+			_, _ = fmt.Fprintln(w, "Duplicate delivery: this notification was already sent.")
 			return
 		}
 		if state == deliveryBusy {
+			deliveryLogger.Info("Webhook already processing", "result", "busy")
+			w.Header().Set("X-Webhook-Result", "busy")
 			http.Error(w, "Delivery is already processing. Retry later.", http.StatusServiceUnavailable)
 			return
 		}
 	}
-	err = s.processEvent(event, eventType, payloadBytes, chatID, int32(topicID), hookID)
+	deliveryLogger.Info("Webhook processing started")
+	sentMsg, err := s.processEvent(event, eventType, payloadBytes, chatID, int32(topicID), hookID)
 	if deliveryID != "" {
-		s.finishDelivery(key, err == nil)
+		// Muted deliveries remain eligible for explicit redelivery after /unmute.
+		s.finishDelivery(key, err == nil && sentMsg != nil)
 	}
 	if err != nil {
-		s.Bot.Logger.Warnf("Webhook processing failed event=%s chat_id=%d topic_id=%d: %s", eventType, chatID, topicID, utils.ErrorDetails(err))
+		deliveryLogger.Warnf("Webhook processing failed: %s", utils.ErrorDetails(err))
+		w.Header().Set("X-Webhook-Result", "failed")
 		http.Error(w, "Webhook processing failed. Redeliver this event after resolving the delivery problem.", http.StatusBadGateway)
 		return
 	}
-	w.WriteHeader(http.StatusOK)
+	if sentMsg == nil {
+		deliveryLogger.Info("Webhook skipped: notifications are muted; use /unmute in this chat/topic", "result", "muted")
+		w.Header().Set("X-Webhook-Result", "muted")
+		_, _ = fmt.Fprintf(w, "Notifications are muted for Telegram chat %d, topic %d. Use /unmute there to resume notifications.\n", chatID, topicID)
+		return
+	}
+	deliveryLogger.Info("Webhook notification sent", "result", "sent", "message_id", sentMsg.Id, "telegram_chat_id", sentMsg.ChatId)
+	w.Header().Set("X-Webhook-Result", "sent")
+	_, _ = fmt.Fprintf(w, "Notification sent to Telegram chat %d, topic %d (message %d).\n", sentMsg.ChatId, topicID, sentMsg.Id)
 }
 
 const (
@@ -259,21 +275,21 @@ func (s *WebhookServer) logMalformed(stage string, err error) {
 	s.Bot.Logger.Warnf("%s", stage)
 }
 
-func (s *WebhookServer) processEvent(event any, eventType string, payloadBytes []byte, chatID int64, topicID int32, hookID int64) error {
+func (s *WebhookServer) processEvent(event any, eventType string, payloadBytes []byte, chatID int64, topicID int32, hookID int64) (*gotdbot.Message, error) {
 	if s.DB != nil {
 		chat, err := s.DB.GetChat(context.Background(), chatID)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if chat != nil && slices.Contains(chat.MutedThreads, int64(topicID)) {
-			return nil
+			return nil, nil
 		}
 	}
 	if repositoryEvent, ok := event.(*github.RepositoryEvent); ok && repositoryEvent.GetAction() == "renamed" && hookID != 0 && s.DB != nil {
 		newName := repositoryEvent.GetRepo().GetFullName()
 		if newName != "" {
 			if err := s.DB.UpdateRepoLinkName(context.Background(), chatID, hookID, newName); err != nil {
-				return err
+				return nil, err
 			}
 			s.Bot.Logger.Infof("repository_link_renamed chat_id=%d", chatID)
 		}
@@ -281,7 +297,7 @@ func (s *WebhookServer) processEvent(event any, eventType string, payloadBytes [
 	msg, markup := formatEvent(eventType, payloadBytes)
 
 	if msg == nil {
-		return fmt.Errorf("event has no formatter")
+		return nil, fmt.Errorf("event has no formatter")
 	}
 
 	opts := &gotdbot.SendMessageOpts{}
@@ -295,17 +311,20 @@ func (s *WebhookServer) processEvent(event any, eventType string, payloadBytes [
 	}
 
 	if s.Bot == nil {
-		return fmt.Errorf("Telegram client is unavailable")
+		return nil, fmt.Errorf("Telegram client is unavailable")
 	}
 	sentMsg, err := s.Bot.SendRichMessage(chatID, msg, opts)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	if sentMsg == nil || sentMsg.Id == 0 {
+		return nil, fmt.Errorf("Telegram did not return a sent message")
 	}
 
-	if sentMsg != nil && s.ContextCache != nil {
+	if s.ContextCache != nil {
 		if ctx, ok := messageContext(event); ok {
 			s.ContextCache.Set(fmt.Sprintf("%d:%d", chatID, sentMsg.Id), ctx, 48*time.Hour)
 		}
 	}
-	return nil
+	return sentMsg, nil
 }

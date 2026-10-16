@@ -73,6 +73,16 @@ func (d *DB) MuteThread(ctx context.Context, chatID int64, threadID int32) error
 	return err
 }
 
+func (d *DB) UnmuteThread(ctx context.Context, chatID int64, threadID int32) error {
+	filter := bson.M{"_id": chatID}
+	update := bson.M{"$pull": bson.M{"muted_threads": threadID}}
+	result, err := d.Chats.UpdateOne(ctx, filter, update)
+	if err == nil && result.MatchedCount == 0 {
+		return errors.New("chat not found")
+	}
+	return err
+}
+
 func (d *DB) GetUserByTelegramID(ctx context.Context, telegramID int64) (*models.User, error) {
 	var user models.User
 	err := d.Users.FindOne(ctx, bson.M{"_id": telegramID}).Decode(&user)

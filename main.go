@@ -46,7 +46,7 @@ func main() {
 	bot, err := gotdbot.NewClient(6, "eb06d4abfb49dc3eeb1aeb98ae0f581e", cfg.TelegramToken, &gotdbot.ClientOpts{
 		Logger:      appLogger,
 		LibraryPath: "./libtdjson.so.1.8.68",
-		AutoRetry:   &gotdbot.AutoRetry{MaxFloodWait: 10 * time.Second, ChatNotFound: true},
+		AutoRetry:   &gotdbot.AutoRetry{MaxFloodWait: 10 * time.Second, ChatNotFound: true, MessageNotFound: true},
 		ErrorHandler: func(c *gotdbot.Client, update gotdbot.TlObject, err error) error {
 			c.Logger.Errorf("Bot handler failed update=%s chat_id=%d: %s", update.GetType(), c.UpdateChatID(update), utils.ErrorDetails(err))
 			return nil
@@ -67,6 +67,7 @@ func main() {
 		registeredCommands[name] = true
 		bot.OnCommand(name, handler)
 	}
+
 	// Commands
 	cmdHandler := commands.NewCommandHandler(cfg, database, oauth, oauthStateCache, clientFactory, cfg.EncryptionKey, contextCache, adminCache, reloadRateLimit)
 	registerCommand("start", cmdHandler.Start)
@@ -142,6 +143,7 @@ func main() {
 	registerCommand("search", cmdHandler.SearchCode)
 
 	registerCommand("mute", cmdHandler.Mute)
+	registerCommand("unmute", cmdHandler.Unmute)
 	registerCommand("done", cmdHandler.Done)
 	registerCommand("read", cmdHandler.Read)
 	registerCommand("stats", cmdHandler.Stats)
