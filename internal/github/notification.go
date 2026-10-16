@@ -364,7 +364,11 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 			if commitURL == "" && repoURL != "" && sha != "" {
 				commitURL = repoURL + "/commit/" + url.PathEscape(sha)
 			}
-			b.WriteString("<p>- ")
+			if description != "" {
+				b.WriteString("<details><summary>- ")
+			} else {
+				b.WriteString("<p>- ")
+			}
 			if sha != "" {
 				b.WriteString(utils.Link(utils.ShortSHA(sha), commitURL))
 				if subject != "" {
@@ -384,12 +388,13 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 				}
 				b.WriteString(" by " + utils.Link(utils.Clip(author, 80), authorURL))
 			}
-			b.WriteString("</p>\n")
 			if description != "" {
 				// Share the description budget so every displayed commit fits.
-				b.WriteString("<details><summary>Commit description</summary>\n<p>" +
+				b.WriteString(" <sup>…</sup></summary>\n<p>" +
 					strings.ReplaceAll(html.EscapeString(utils.Clip(description, 1000/shown)), "\n", "<br>") +
 					"</p></details>\n\n")
+			} else {
+				b.WriteString("</p>\n")
 			}
 		}
 		if remaining := count - shown; remaining > 0 && !push.GetDeleted() {
