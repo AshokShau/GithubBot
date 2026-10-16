@@ -53,7 +53,8 @@ func init() {
 
 func (h *CallbackHandler) HandleSettings(c *gotdbot.Client, u *gotdbot.UpdateNewCallbackQuery) error {
 	if !u.IsPrivate() && !utils.IsAdmin(c, u.ChatId, u.SenderUserId, h.AdminCache) {
-		_ = u.Answer(c, 0, true, "Only admins can change settings", "")
+		_ = u.Answer(c, "Only admins can change settings", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
+		_ = u.Answer(c, "Only admins can change settings", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 
@@ -93,7 +94,7 @@ func (h *CallbackHandler) HandleSettings(c *gotdbot.Client, u *gotdbot.UpdateNew
 		repoName := parts[2]
 		link, err := h.DB.GetRepoLink(context.Background(), u.ChatId, repoName)
 		if err != nil {
-			_ = u.Answer(c, 0, false, "Repo not found", "")
+			_ = u.Answer(c, "Repo not found", &gotdbot.CallbackAnswerOpts{ShowAlert: false})
 			return nil
 		}
 
@@ -117,18 +118,18 @@ func (h *CallbackHandler) HandleSettings(c *gotdbot.Client, u *gotdbot.UpdateNew
 
 			user, uErr := h.DB.GetUserByTelegramID(context.Background(), u.SenderUserId)
 			if uErr != nil || user.EncryptedOAuthToken == "" {
-				_ = u.Answer(c, 0, true, "Please /connect to GitHub first.", "")
+				_ = u.Answer(c, "Please /connect to GitHub first.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 				return nil
 			}
 			token, tErr := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
 			if tErr != nil {
-				_ = u.Answer(c, 0, true, "Auth error.", "")
+				_ = u.Answer(c, "Auth error.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 				return nil
 			}
 
 			ghClient, err := h.ClientFactory.GetUserClient(context.Background(), token)
 			if err != nil {
-				_ = u.Answer(c, 0, true, "Failed to create GitHub client.", "")
+				_ = u.Answer(c, "Failed to create GitHub client.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 				return nil
 			}
 			repoParts := strings.Split(link.RepoFullName, "/")
@@ -142,7 +143,7 @@ func (h *CallbackHandler) HandleSettings(c *gotdbot.Client, u *gotdbot.UpdateNew
 				if h.handleAuthError(c, u, hErr) {
 					return nil
 				}
-				_ = u.Answer(c, 0, true, "Failed to fetch GitHub settings.", "")
+				_ = u.Answer(c, "Failed to fetch GitHub settings.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 				return nil
 			}
 
@@ -181,7 +182,7 @@ func (h *CallbackHandler) HandleSettings(c *gotdbot.Client, u *gotdbot.UpdateNew
 				if h.handleAuthError(c, u, editErr) {
 					return nil
 				}
-				_ = u.Answer(c, 0, true, "Failed to update GitHub.", "")
+				_ = u.Answer(c, "Failed to update GitHub.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 				return nil
 			}
 
@@ -226,7 +227,7 @@ func (h *CallbackHandler) showRepoMenu(c *gotdbot.Client, u *gotdbot.UpdateNewCa
 		},
 	}
 
-	_, err := u.EditMessageText(c, fmt.Sprintf("Configuration for <b>%s</b>:", l.RepoFullName), &gotdbot.EditTextMessageOpts{
+	_, err := u.EditMessageText(c, fmt.Sprintf("Configuration for <b>%s</b>:", l.RepoFullName), &gotdbot.EditMessageTextOpts{
 		ReplyMarkup: kb,
 		ParseMode:   gotdbot.ParseModeHTML,
 	})
@@ -236,19 +237,19 @@ func (h *CallbackHandler) showRepoMenu(c *gotdbot.Client, u *gotdbot.UpdateNewCa
 func (h *CallbackHandler) handlePresets(c *gotdbot.Client, u *gotdbot.UpdateNewCallbackQuery, l *models.RepoLink, mode string) error {
 	user, uErr := h.DB.GetUserByTelegramID(context.Background(), u.SenderUserId)
 	if uErr != nil || user.EncryptedOAuthToken == "" {
-		_ = u.Answer(c, 0, true, "Please /connect to GitHub first.", "")
+		_ = u.Answer(c, "Please /connect to GitHub first.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 
 	token, tErr := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
 	if tErr != nil {
-		_ = u.Answer(c, 0, true, "Auth error.", "")
+		_ = u.Answer(c, "Auth error.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 
 	ghClient, err := h.ClientFactory.GetUserClient(context.Background(), token)
 	if err != nil {
-		_ = u.Answer(c, 0, true, "Failed to create GitHub client.", "")
+		_ = u.Answer(c, "Failed to create GitHub client.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 	repoParts := strings.Split(l.RepoFullName, "/")
@@ -262,7 +263,7 @@ func (h *CallbackHandler) handlePresets(c *gotdbot.Client, u *gotdbot.UpdateNewC
 		if h.handleAuthError(c, u, hErr) {
 			return nil
 		}
-		_ = u.Answer(c, 0, true, "Failed to fetch GitHub hook.", "")
+		_ = u.Answer(c, "Failed to fetch GitHub hook.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 
@@ -281,7 +282,7 @@ func (h *CallbackHandler) handlePresets(c *gotdbot.Client, u *gotdbot.UpdateNewC
 		if h.handleAuthError(c, u, editErr) {
 			return nil
 		}
-		_ = u.Answer(c, 0, true, "Failed to update GitHub hook.", "")
+		_ = u.Answer(c, "Failed to update GitHub hook.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 
@@ -296,7 +297,7 @@ func (h *CallbackHandler) handlePresets(c *gotdbot.Client, u *gotdbot.UpdateNewC
 		},
 	}
 
-	_, err = u.EditMessageText(c, responseText, &gotdbot.EditTextMessageOpts{
+	_, err = u.EditMessageText(c, responseText, &gotdbot.EditMessageTextOpts{
 		ReplyMarkup: kb,
 		ParseMode:   gotdbot.ParseModeHTML,
 	})
@@ -386,7 +387,7 @@ func (h *CallbackHandler) showIndividualEvents(c *gotdbot.Client, u *gotdbot.Upd
 
 	kb := &gotdbot.ReplyMarkupInlineKeyboard{Rows: rows}
 
-	_, err = u.EditMessageText(c, fmt.Sprintf("Individual Events for <b>%s</b>:", l.RepoFullName), &gotdbot.EditTextMessageOpts{
+	_, err = u.EditMessageText(c, fmt.Sprintf("Individual Events for <b>%s</b>:", l.RepoFullName), &gotdbot.EditMessageTextOpts{
 		ReplyMarkup: kb,
 		ParseMode:   gotdbot.ParseModeHTML,
 	})
@@ -413,7 +414,7 @@ func (h *CallbackHandler) showRepoList(c *gotdbot.Client, u *gotdbot.UpdateNewCa
 
 	kb := &gotdbot.ReplyMarkupInlineKeyboard{Rows: rows}
 
-	_, err = u.EditMessageText(c, "Select a repository to configure:", &gotdbot.EditTextMessageOpts{
+	_, err = u.EditMessageText(c, "Select a repository to configure:", &gotdbot.EditMessageTextOpts{
 		ReplyMarkup: kb,
 	})
 	return err
@@ -422,19 +423,19 @@ func (h *CallbackHandler) showRepoList(c *gotdbot.Client, u *gotdbot.UpdateNewCa
 func (h *CallbackHandler) handleRepoPage(c *gotdbot.Client, u *gotdbot.UpdateNewCallbackQuery, page int) error {
 	user, err := h.DB.GetUserByTelegramID(context.Background(), u.SenderUserId)
 	if err != nil || user.EncryptedOAuthToken == "" {
-		_ = u.Answer(c, 0, true, "Auth error. Please /connect again.", "")
+		_ = u.Answer(c, "Auth error. Please /connect again.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 
 	token, err := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
 	if err != nil {
-		_ = u.Answer(c, 0, true, "Auth error.", "")
+		_ = u.Answer(c, "Auth error.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 
 	ghClient, err := h.ClientFactory.GetUserClient(context.Background(), token)
 	if err != nil {
-		_ = u.Answer(c, 0, true, "Failed to create GitHub client.", "")
+		_ = u.Answer(c, "Failed to create GitHub client.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 	opts := &gh.RepositoryListOptions{
@@ -448,7 +449,7 @@ func (h *CallbackHandler) handleRepoPage(c *gotdbot.Client, u *gotdbot.UpdateNew
 		if h.handleAuthError(c, u, err) {
 			return nil
 		}
-		_ = u.Answer(c, 0, true, "GitHub API error.", "")
+		_ = u.Answer(c, "GitHub API error.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 
@@ -491,7 +492,7 @@ func (h *CallbackHandler) handleRepoPage(c *gotdbot.Client, u *gotdbot.UpdateNew
 
 	kb := &gotdbot.ReplyMarkupInlineKeyboard{Rows: rows}
 
-	_, err = u.EditMessageText(c, fmt.Sprintf("Select a repository to add (Page %d):", page), &gotdbot.EditTextMessageOpts{
+	_, err = u.EditMessageText(c, fmt.Sprintf("Select a repository to add (Page %d):", page), &gotdbot.EditMessageTextOpts{
 		ReplyMarkup: kb,
 	})
 
@@ -507,7 +508,7 @@ func (h *CallbackHandler) handleAddRepoByID(c *gotdbot.Client, u *gotdbot.Update
 	token, _ := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
 	ghClient, err := h.ClientFactory.GetUserClient(context.Background(), token)
 	if err != nil {
-		_ = u.Answer(c, 0, true, "Failed to create GitHub client.", "")
+		_ = u.Answer(c, "Failed to create GitHub client.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 
@@ -516,13 +517,13 @@ func (h *CallbackHandler) handleAddRepoByID(c *gotdbot.Client, u *gotdbot.Update
 		if h.handleAuthError(c, u, err) {
 			return nil
 		}
-		_ = u.Answer(c, 0, true, "Repo not found or access denied.", "")
+		_ = u.Answer(c, "Repo not found or access denied.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 
 	if existingLink, _ := h.DB.GetRepoLink(context.Background(), u.ChatId, repo.GetFullName()); existingLink != nil {
-		_ = u.Answer(c, 0, true, fmt.Sprintf("Repository %s is already linked to this chat.", repo.GetFullName()), "")
-		_, err = u.EditMessageText(c, fmt.Sprintf("Repository <b>%s</b> is already linked to this chat.", repo.GetFullName()), &gotdbot.EditTextMessageOpts{
+		_ = u.Answer(c, fmt.Sprintf("Repository %s is already linked to this chat.", repo.GetFullName()), &gotdbot.CallbackAnswerOpts{ShowAlert: true})
+		_, err = u.EditMessageText(c, fmt.Sprintf("Repository <b>%s</b> is already linked to this chat.", repo.GetFullName()), &gotdbot.EditMessageTextOpts{
 			ParseMode: gotdbot.ParseModeHTML,
 		})
 		return err
@@ -530,7 +531,7 @@ func (h *CallbackHandler) handleAddRepoByID(c *gotdbot.Client, u *gotdbot.Update
 
 	chatToken, encErr := utils.Encrypt(fmt.Sprintf("%d", u.ChatId), h.EncryptionKey)
 	if encErr != nil {
-		_ = u.Answer(c, 0, true, "Error generating webhook token.", "")
+		_ = u.Answer(c, "Error generating webhook token.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 
@@ -559,7 +560,7 @@ func (h *CallbackHandler) handleAddRepoByID(c *gotdbot.Client, u *gotdbot.Update
 			return nil
 		}
 
-		_, err = u.EditMessageText(c, fmt.Sprintf("Webhook creation failed: %v. Check permissions", hookErr), &gotdbot.EditTextMessageOpts{
+		_, err = u.EditMessageText(c, fmt.Sprintf("Webhook creation failed: %v. Check permissions", hookErr), &gotdbot.EditMessageTextOpts{
 			ParseMode: gotdbot.ParseModeHTML,
 		})
 		return err
@@ -573,11 +574,11 @@ func (h *CallbackHandler) handleAddRepoByID(c *gotdbot.Client, u *gotdbot.Update
 
 	err = h.DB.AddRepoLink(context.Background(), u.ChatId, link)
 	if err != nil {
-		_ = u.Answer(c, 0, false, "Error linking repository.", "")
+		_ = u.Answer(c, "Error linking repository.", &gotdbot.CallbackAnswerOpts{ShowAlert: false})
 		return nil
 	}
 
-	_, err = u.EditMessageText(c, fmt.Sprintf("✅ Repository <b>%s</b> linked successfully!", repo.GetFullName()), &gotdbot.EditTextMessageOpts{
+	_, err = u.EditMessageText(c, fmt.Sprintf("✅ Repository <b>%s</b> linked successfully!", repo.GetFullName()), &gotdbot.EditMessageTextOpts{
 		ParseMode: gotdbot.ParseModeHTML,
 	})
 	return err
@@ -596,7 +597,7 @@ func (h *CallbackHandler) HandlePRAction(c *gotdbot.Client, u *gotdbot.UpdateNew
 
 	prContext, ok := h.ActionCache.Get(actionID)
 	if !ok {
-		_ = u.Answer(c, 0, true, "Action expired. Please open the PR link manually.", "")
+		_ = u.Answer(c, "Action expired. Please open the PR link manually.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 
@@ -607,25 +608,25 @@ func (h *CallbackHandler) HandlePRAction(c *gotdbot.Client, u *gotdbot.UpdateNew
 	repoFullName := fmt.Sprintf("%s/%s", owner, repo)
 	_, err := h.DB.GetRepoLink(context.Background(), u.ChatId, repoFullName)
 	if err != nil {
-		_ = u.Answer(c, 0, true, "This chat is not linked to the repo.", "")
+		_ = u.Answer(c, "This chat is not linked to the repo.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 
 	user, err := h.DB.GetUserByTelegramID(context.Background(), u.SenderUserId)
 	if err != nil || user.EncryptedOAuthToken == "" {
-		_ = u.Answer(c, 0, true, "Please connect GitHub account first via /connect", "")
+		_ = u.Answer(c, "Please connect GitHub account first via /connect", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 
 	token, err := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
 	if err != nil {
-		_ = u.Answer(c, 0, true, "Auth error. Reconnect via /connect", "")
+		_ = u.Answer(c, "Auth error. Reconnect via /connect", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 
 	ghClient, err := h.ClientFactory.GetUserClient(context.Background(), token)
 	if err != nil {
-		_ = u.Answer(c, 0, true, "Failed to create GitHub client.", "")
+		_ = u.Answer(c, "Failed to create GitHub client.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 	ctxBg := context.Background()
@@ -645,11 +646,11 @@ func (h *CallbackHandler) HandlePRAction(c *gotdbot.Client, u *gotdbot.UpdateNew
 		if h.handleAuthError(c, u, err) {
 			return nil
 		}
-		_ = u.Answer(c, 0, true, fmt.Sprintf("Failed: %v", err), "")
+		_ = u.Answer(c, fmt.Sprintf("Failed: %v", err), &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
 
-	_ = u.Answer(c, 0, true, msg, "")
+	_ = u.Answer(c, msg, &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 	return nil
 }
 
@@ -657,7 +658,7 @@ func (h *CallbackHandler) handleAuthError(c *gotdbot.Client, u *gotdbot.UpdateNe
 	if errResp, ok := errors.AsType[*gh.ErrorResponse](err); ok {
 		if errResp.Response.StatusCode == http.StatusUnauthorized || errResp.Response.StatusCode == http.StatusForbidden {
 			_ = h.DB.ClearUserToken(context.Background(), u.SenderUserId)
-			_ = u.Answer(c, 0, true, "GitHub auth error. Token revoked or expired.", "")
+			_ = u.Answer(c, "GitHub auth error. Token revoked or expired.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 			return true
 		}
 	}

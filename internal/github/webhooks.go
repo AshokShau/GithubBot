@@ -251,7 +251,7 @@ func (s *WebhookServer) processEvent(event any, chatID int64, topicID int32, hoo
 
 	msg = normalizeMessage(msg)
 
-	opts := &gotdbot.SendTextMessageOpts{
+	opts := &gotdbot.SendMessageOpts{
 		ParseMode:             gotdbot.ParseModeMarkdownV2,
 		DisableWebPagePreview: true,
 	}
@@ -264,7 +264,7 @@ func (s *WebhookServer) processEvent(event any, chatID int64, topicID int32, hoo
 		opts.ReplyMarkup = markup
 	}
 
-	sentMsg, err := s.Bot.SendTextMessage(chatID, msg, opts)
+	sentMsg, err := s.Bot.SendMessage(chatID, msg, opts)
 	if err != nil {
 		s.Bot.Logger.Warnf("Error sending message to chat %d: %v", chatID, err)
 		return

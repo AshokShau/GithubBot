@@ -70,7 +70,7 @@ I can help you manage your GitHub repositories and notifications directly from T
 3. Use /settings to customize your notification preferences.
 
 Need help? Type /help for a full list of commands.`
-	_, err := m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err := m.ReplyText(c, msg, &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -90,7 +90,7 @@ func (h *CommandHandler) Connect(c *gotdbot.Client, m *gotdbot.Message) error {
 	url := h.OAuth.GetLoginURL(state)
 
 	msg := fmt.Sprintf("Please [connect your GitHub account](%s) to enable automatic webhook setup and perform actions like approving PRs.", url)
-	_, err = m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeMarkdown})
+	_, err = m.ReplyText(c, msg, &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeMarkdown})
 	return err
 }
 
@@ -109,7 +109,7 @@ func (h *CommandHandler) AddRepo(c *gotdbot.Client, m *gotdbot.Message) error {
 	user, uErr := h.DB.GetUserByTelegramID(context.Background(), m.SenderID())
 	if uErr != nil || user.EncryptedOAuthToken == "" {
 		msg := fmt.Sprintf("Please [connect your GitHub account](%s) first to link repository %s.", h.OAuth.GetLoginURL("connect"), repoFullName)
-		_, _ = m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeMarkdown})
+		_, _ = m.ReplyText(c, msg, &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeMarkdown})
 		return nil
 	}
 
@@ -143,7 +143,7 @@ func (h *CommandHandler) AddRepo(c *gotdbot.Client, m *gotdbot.Message) error {
 
 	if existingLink, _ := h.DB.GetRepoLink(context.Background(), m.ChatId, repoFullName); existingLink != nil {
 		msg := fmt.Sprintf("Repository <b>%s</b> is already linked to this chat.", html.EscapeString(repoFullName))
-		_, err = m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+		_, err = m.ReplyText(c, msg, &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 		return err
 	}
 
@@ -153,7 +153,7 @@ func (h *CommandHandler) AddRepo(c *gotdbot.Client, m *gotdbot.Message) error {
 			return nil
 		}
 		if errResp, ok := errors.AsType[*github.ErrorResponse](getErr); ok && errResp.Response.StatusCode == http.StatusNotFound {
-			_, _ = m.ReplyText(c, "❌ <b>Repository not found.</b>\nPlease check the name and ensure you have access.", &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+			_, _ = m.ReplyText(c, "❌ <b>Repository not found.</b>\nPlease check the name and ensure you have access.", &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 			return nil
 		}
 		_, _ = m.ReplyText(c, fmt.Sprintf("Error fetching repository: %v", getErr), nil)
@@ -198,13 +198,13 @@ func (h *CommandHandler) AddRepo(c *gotdbot.Client, m *gotdbot.Message) error {
 		if errResp, ok := errors.AsType[*github.ErrorResponse](hookErr); ok && errResp.Response.StatusCode == http.StatusNotFound {
 			safeRepoName := html.EscapeString(repoFullName)
 			msg := fmt.Sprintf("❌ <b>Insufficient permissions.</b>\nYou need admin access to repository <b>%s</b> to create webhooks.", safeRepoName)
-			_, err := m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+			_, err := m.ReplyText(c, msg, &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 			return err
 		}
 
 		log.Printf("Webhook creation failed for %s: %v", repoFullName, hookErr)
 		msg := "⚠️ <b>Webhook creation failed.</b>\nPlease ensure you have admin rights and try again."
-		_, err := m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+		_, err := m.ReplyText(c, msg, &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 		return err
 	}
 
@@ -221,7 +221,7 @@ func (h *CommandHandler) AddRepo(c *gotdbot.Client, m *gotdbot.Message) error {
 	}
 
 	msg := fmt.Sprintf("Repository <b>%s</b> linked successfully!", repoFullName)
-	_, err = m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, msg, &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -307,7 +307,7 @@ func (h *CommandHandler) sendRepoList(c *gotdbot.Client, m *gotdbot.Message, pag
 		kb = append(kb, navRow)
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("Select a repository to add (Page %d):", page), &gotdbot.SendTextMessageOpts{
+	_, err = m.ReplyText(c, fmt.Sprintf("Select a repository to add (Page %d):", page), &gotdbot.SendMessageOpts{
 		ReplyMarkup: &gotdbot.ReplyMarkupInlineKeyboard{Rows: kb},
 	})
 	return err
@@ -336,7 +336,7 @@ func (h *CommandHandler) Settings(c *gotdbot.Client, m *gotdbot.Message) error {
 		})
 	}
 
-	_, err = m.ReplyText(c, "Select a repository to configure:", &gotdbot.SendTextMessageOpts{
+	_, err = m.ReplyText(c, "Select a repository to configure:", &gotdbot.SendMessageOpts{
 		ReplyMarkup: &gotdbot.ReplyMarkupInlineKeyboard{Rows: kb},
 	})
 	return err
@@ -409,7 +409,7 @@ func (h *CommandHandler) RemoveRepo(c *gotdbot.Client, m *gotdbot.Message) error
 		return err
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("Repository <b>%s</b> removed successfully.%s", repoFullName, webhookStatusMsg), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, fmt.Sprintf("Repository <b>%s</b> removed successfully.%s", repoFullName, webhookStatusMsg), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -429,7 +429,7 @@ func (h *CommandHandler) Repos(c *gotdbot.Client, m *gotdbot.Message) error {
 		msg.WriteString(fmt.Sprintf("• <b>%s</b>\n", l.RepoFullName))
 	}
 
-	_, err = m.ReplyText(c, "<b>Linked Repositories:</b>\n"+msg.String(), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, "<b>Linked Repositories:</b>\n"+msg.String(), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -531,7 +531,7 @@ func (h *CommandHandler) Help(c *gotdbot.Client, m *gotdbot.Message) error {
 /privacy - View the privacy policy
 /help - Show this help menu`
 
-	_, err := m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	_, err := m.ReplyText(c, msg, &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
@@ -595,7 +595,7 @@ We value your privacy and are committed to protecting your data. This policy out
 <b>5. Contact</b>
 If you have questions or concerns, please visit our <a href="https://github.com/AshokShau/GithubBot">GitHub repository</a> or join our <a href="https://t.me/GuardxSupport">Telegram Support Group</a>.`
 
-	_, err := m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	_, err := m.ReplyText(c, msg, &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
@@ -614,7 +614,7 @@ func (h *CommandHandler) handleAuthError(c *gotdbot.Client, m *gotdbot.Message, 
 		if errResp.Response.StatusCode == http.StatusUnauthorized || errResp.Response.StatusCode == http.StatusForbidden {
 			_ = h.DB.ClearUserToken(context.Background(), m.SenderID())
 			msg := "⚠️ <b>GitHub authentication failed.</b>\nIt seems your token has expired or was revoked. Please /connect again."
-			_, _ = m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+			_, _ = m.ReplyText(c, msg, &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 			return true
 		}
 	}
@@ -710,7 +710,7 @@ func (h *CommandHandler) getAuthenticatedClient(c *gotdbot.Client, m *gotdbot.Me
 	user, err := h.DB.GetUserByTelegramID(context.Background(), m.SenderID())
 	if err != nil || user.EncryptedOAuthToken == "" {
 		msg := fmt.Sprintf("Please [connect your GitHub account](%s) first.", h.OAuth.GetLoginURL("connect"))
-		_, _ = m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeMarkdown})
+		_, _ = m.ReplyText(c, msg, &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeMarkdown})
 		return nil, fmt.Errorf("auth required")
 	}
 
@@ -830,7 +830,7 @@ func (h *CommandHandler) Me(c *gotdbot.Client, m *gotdbot.Message) error {
 		html.EscapeString(user.GetHTMLURL()),
 	)
 
-	_, err = m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, msg, &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -917,7 +917,7 @@ func (h *CommandHandler) Repo(c *gotdbot.Client, m *gotdbot.Message) error {
 		html.EscapeString(repoInfo.GetHTMLURL()),
 	)
 
-	_, err = m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, msg, &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -942,7 +942,7 @@ func (h *CommandHandler) Star(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("⭐ Starred repository <b>%s/%s</b>!", owner, repo), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, fmt.Sprintf("⭐ Starred repository <b>%s/%s</b>!", owner, repo), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -967,7 +967,7 @@ func (h *CommandHandler) Unstar(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("Removed star from <b>%s/%s</b>.", owner, repo), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, fmt.Sprintf("Removed star from <b>%s/%s</b>.", owner, repo), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -993,7 +993,7 @@ func (h *CommandHandler) Watch(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("👁️ Watching repository <b>%s/%s</b>!", owner, repo), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, fmt.Sprintf("👁️ Watching repository <b>%s/%s</b>!", owner, repo), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -1018,7 +1018,7 @@ func (h *CommandHandler) Unwatch(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("Stopped watching <b>%s/%s</b>.", owner, repo), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, fmt.Sprintf("Stopped watching <b>%s/%s</b>.", owner, repo), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -1043,7 +1043,7 @@ func (h *CommandHandler) Fork(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("🍴 Repository forked successfully to <b>%s</b>!", forked.GetFullName()), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, fmt.Sprintf("🍴 Repository forked successfully to <b>%s</b>!", forked.GetFullName()), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -1069,7 +1069,7 @@ func (h *CommandHandler) Archive(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("🔒 Repository <b>%s/%s</b> archived.", owner, repo), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, fmt.Sprintf("🔒 Repository <b>%s/%s</b> archived.", owner, repo), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -1095,7 +1095,7 @@ func (h *CommandHandler) Unarchive(c *gotdbot.Client, m *gotdbot.Message) error 
 		return nil
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("🔓 Repository <b>%s/%s</b> unarchived.", owner, repo), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, fmt.Sprintf("🔓 Repository <b>%s/%s</b> unarchived.", owner, repo), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -1128,7 +1128,7 @@ func (h *CommandHandler) Contributors(c *gotdbot.Client, m *gotdbot.Message) err
 		msg.WriteString(fmt.Sprintf("%d. <b>%s</b> (%d commits)\n", i+1, html.EscapeString(c.GetLogin()), c.GetContributions()))
 	}
 
-	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -1169,7 +1169,7 @@ func (h *CommandHandler) Languages(c *gotdbot.Client, m *gotdbot.Message) error 
 		}
 	}
 
-	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -1202,7 +1202,7 @@ func (h *CommandHandler) Branches(c *gotdbot.Client, m *gotdbot.Message) error {
 		msg.WriteString(fmt.Sprintf("• %s\n", html.EscapeString(br.GetName())))
 	}
 
-	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -1253,7 +1253,7 @@ func (h *CommandHandler) Branch(c *gotdbot.Client, m *gotdbot.Message) error {
 		html.EscapeString(branch.GetCommit().GetCommit().GetAuthor().GetName()),
 	)
 
-	_, err = m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, msg, &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -1286,7 +1286,7 @@ func (h *CommandHandler) Default(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("✅ Default branch for <b>%s/%s</b> changed to <b>%s</b>.", owner, repo, html.EscapeString(branchName)), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, fmt.Sprintf("✅ Default branch for <b>%s/%s</b> changed to <b>%s</b>.", owner, repo, html.EscapeString(branchName)), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -1346,7 +1346,7 @@ func (h *CommandHandler) Issue(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("✅ Created issue <b>#%d</b>: <a href=\"%s\">%s</a>", issue.GetNumber(), issue.GetHTMLURL(), html.EscapeString(issue.GetTitle())), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, fmt.Sprintf("✅ Created issue <b>#%d</b>: <a href=\"%s\">%s</a>", issue.GetNumber(), issue.GetHTMLURL(), html.EscapeString(issue.GetTitle())), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -1393,7 +1393,7 @@ func (h *CommandHandler) Comment(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("✅ Comment added to <b>#%d</b>: <a href=\"%s\">View</a>", num, comment.GetHTMLURL()), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, fmt.Sprintf("✅ Comment added to <b>#%d</b>: <a href=\"%s\">View</a>", num, comment.GetHTMLURL()), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -1431,7 +1431,7 @@ func (h *CommandHandler) Assign(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("✅ Assigned <b>@%s</b> to #%d.", html.EscapeString(target), num), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, fmt.Sprintf("✅ Assigned <b>@%s</b> to #%d.", html.EscapeString(target), num), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -1469,7 +1469,7 @@ func (h *CommandHandler) AssignMe(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("✅ Assigned you (<b>@%s</b>) to #%d.", html.EscapeString(target), num), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, fmt.Sprintf("✅ Assigned you (<b>@%s</b>) to #%d.", html.EscapeString(target), num), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -1507,7 +1507,7 @@ func (h *CommandHandler) Unassign(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("✅ Unassigned <b>@%s</b> from #%d.", html.EscapeString(target), num), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, fmt.Sprintf("✅ Unassigned <b>@%s</b> from #%d.", html.EscapeString(target), num), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -1614,7 +1614,7 @@ func (h *CommandHandler) Labels(c *gotdbot.Client, m *gotdbot.Message) error {
 		}
 	}
 
-	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -1672,7 +1672,7 @@ func (h *CommandHandler) Milestone(c *gotdbot.Client, m *gotdbot.Message) error 
 		return nil
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("✅ Assigned milestone <b>%s</b> to #%d.", html.EscapeString(mName), num), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, fmt.Sprintf("✅ Assigned milestone <b>%s</b> to #%d.", html.EscapeString(mName), num), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -1907,7 +1907,7 @@ func (h *CommandHandler) Merge(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("✅ Merged PR #%d using strategy: <b>%s</b>.", num, method), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, fmt.Sprintf("✅ Merged PR #%d using strategy: <b>%s</b>.", num, method), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -2058,7 +2058,7 @@ func (h *CommandHandler) Checks(c *gotdbot.Client, m *gotdbot.Message) error {
 		}
 	}
 
-	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -2095,7 +2095,7 @@ func (h *CommandHandler) Files(c *gotdbot.Client, m *gotdbot.Message) error {
 		msg.WriteString(fmt.Sprintf("• %s (<b>+%d</b> / <b>-%d</b>)\n", html.EscapeString(f.GetFilename()), f.GetAdditions(), f.GetDeletions()))
 	}
 
-	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -2134,7 +2134,7 @@ func (h *CommandHandler) Diff(c *gotdbot.Client, m *gotdbot.Message) error {
 		num, pr.GetChangedFiles(), pr.GetAdditions(), pr.GetDeletions(),
 	)
 
-	_, err = m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, msg, &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -2175,7 +2175,7 @@ func (h *CommandHandler) Reviews(c *gotdbot.Client, m *gotdbot.Message) error {
 		}
 	}
 
-	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -2220,7 +2220,7 @@ func (h *CommandHandler) Mergeable(c *gotdbot.Client, m *gotdbot.Message) error 
 		num, status, html.EscapeString(pr.GetMergeableState()),
 	)
 
-	_, err = m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, msg, &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -2260,7 +2260,7 @@ func (h *CommandHandler) RequestReview(c *gotdbot.Client, m *gotdbot.Message) er
 		return nil
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("✅ Review requested from <b>@%s</b> for PR #%d.", html.EscapeString(target), num), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, fmt.Sprintf("✅ Review requested from <b>@%s</b> for PR #%d.", html.EscapeString(target), num), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -2305,7 +2305,7 @@ func (h *CommandHandler) Commit(c *gotdbot.Client, m *gotdbot.Message) error {
 		html.EscapeString(commit.GetHTMLURL()),
 	)
 
-	_, err = m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, msg, &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -2342,7 +2342,7 @@ func (h *CommandHandler) Commits(c *gotdbot.Client, m *gotdbot.Message) error {
 		msg.WriteString(fmt.Sprintf("• <code>%s</code> - %s by <b>%s</b>\n", html.EscapeString(shortSHA), html.EscapeString(strings.Split(c.GetCommit().GetMessage(), "\n")[0]), html.EscapeString(c.GetCommit().GetAuthor().GetName())))
 	}
 
-	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -2391,7 +2391,7 @@ func (h *CommandHandler) Compare(c *gotdbot.Client, m *gotdbot.Message) error {
 		html.EscapeString(comp.GetHTMLURL()),
 	)
 
-	_, err = m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, msg, &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -2440,7 +2440,7 @@ func (h *CommandHandler) Actions(c *gotdbot.Client, m *gotdbot.Message) error {
 		}
 	}
 
-	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -2490,7 +2490,7 @@ func (h *CommandHandler) RunWorkflow(c *gotdbot.Client, m *gotdbot.Message) erro
 		return nil
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("🚀 Triggered workflow <b>%s</b> on branch <b>%s</b>.", html.EscapeString(workflowFile), html.EscapeString(ref)), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, fmt.Sprintf("🚀 Triggered workflow <b>%s</b> on branch <b>%s</b>.", html.EscapeString(workflowFile), html.EscapeString(ref)), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -2584,7 +2584,7 @@ func (h *CommandHandler) WorkflowLogs(c *gotdbot.Client, m *gotdbot.Message) err
 	}
 
 	msg := fmt.Sprintf("📖 <a href=\"%s\">Open workflow logs for run #%d</a>", html.EscapeString(run.GetHTMLURL()+"/jobs"), num)
-	_, err = m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, msg, &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -2623,7 +2623,7 @@ func (h *CommandHandler) Release(c *gotdbot.Client, m *gotdbot.Message) error {
 			return nil
 		}
 
-		_, err = m.ReplyText(c, fmt.Sprintf("🚀 Created release <b>%s</b>: <a href=\"%s\">View Release</a>", html.EscapeString(rel.GetTagName()), html.EscapeString(rel.GetHTMLURL())), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+		_, err = m.ReplyText(c, fmt.Sprintf("🚀 Created release <b>%s</b>: <a href=\"%s\">View Release</a>", html.EscapeString(rel.GetTagName()), html.EscapeString(rel.GetHTMLURL())), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 		return err
 	}
 
@@ -2662,7 +2662,7 @@ func (h *CommandHandler) Release(c *gotdbot.Client, m *gotdbot.Message) error {
 		msg += fmt.Sprintf("\n\n<b>Notes:</b>\n<i>%s</i>", html.EscapeString(body))
 	}
 
-	_, err = m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, msg, &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -2702,7 +2702,7 @@ func (h *CommandHandler) Changelog(c *gotdbot.Client, m *gotdbot.Message) error 
 		msg = msg[:4000] + "..."
 	}
 
-	_, err = m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, msg, &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -2853,7 +2853,7 @@ func (h *CommandHandler) CreateDiscussion(c *gotdbot.Client, m *gotdbot.Message)
 	}
 
 	disc := respCreate.Data.CreateDiscussion.Discussion
-	_, err = m.ReplyText(c, fmt.Sprintf("✅ Created discussion <b>#%d</b>: <a href=\"%s\">View Discussion</a>", disc.Number, html.EscapeString(disc.URL)), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, fmt.Sprintf("✅ Created discussion <b>#%d</b>: <a href=\"%s\">View Discussion</a>", disc.Number, html.EscapeString(disc.URL)), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -3034,7 +3034,7 @@ func (h *CommandHandler) Find(c *gotdbot.Client, m *gotdbot.Message) error {
 		}
 	}
 
-	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -3079,7 +3079,7 @@ func (h *CommandHandler) PRSearch(c *gotdbot.Client, m *gotdbot.Message) error {
 		}
 	}
 
-	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -3124,7 +3124,7 @@ func (h *CommandHandler) SearchCode(c *gotdbot.Client, m *gotdbot.Message) error
 		}
 	}
 
-	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -3297,7 +3297,7 @@ func (h *CommandHandler) Stats(c *gotdbot.Client, m *gotdbot.Message) error {
 		html.EscapeString(lastCommit),
 	)
 
-	_, err = m.ReplyText(c, msg, &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, msg, &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }
 
@@ -3334,6 +3334,6 @@ func (h *CommandHandler) Activity(c *gotdbot.Client, m *gotdbot.Message) error {
 		}
 	}
 
-	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+	_, err = m.ReplyText(c, msg.String(), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 	return err
 }

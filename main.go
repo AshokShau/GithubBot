@@ -41,7 +41,7 @@ func main() {
 	// TODO: add cfg.ApiID or cfg.ApiHash
 
 	bot, err := gotdbot.NewClient(6, "eb06d4abfb49dc3eeb1aeb98ae0f581e", cfg.TelegramToken, &gotdbot.ClientOpts{
-		LibraryPath: "./libtdjson.so.1.8.67",
+		LibraryPath: "./libtdjson.so.1.8.68",
 		AutoRetry:   &gotdbot.AutoRetry{MaxFloodWait: 10 * time.Second, ChatNotFound: true},
 	})
 
@@ -235,7 +235,7 @@ func main() {
 			return
 		}
 
-		_, _ = bot.SendTextMessage(telegramID, fmt.Sprintf("✅ GitHub account <b>%s</b> connected successfully!", u.GetLogin()), &gotdbot.SendTextMessageOpts{ParseMode: gotdbot.ParseModeHTML})
+		_, _ = bot.SendMessage(telegramID, fmt.Sprintf("✅ GitHub account <b>%s</b> connected successfully!", u.GetLogin()), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML})
 
 		html := fmt.Sprintf(`
 		<html>
