@@ -71,6 +71,7 @@ func main() {
 
 	// Commands
 	cmdHandler := commands.NewCommandHandler(cfg, database, oauth, oauthStateCache, clientFactory, cfg.EncryptionKey, contextCache, adminCache, reloadRateLimit, menuOwners)
+	bot.OnUpdateNewGuestQuery(cmdHandler.Guest, nil)
 	registerCommand("start", cmdHandler.Start)
 	registerCommand("connect", cmdHandler.Connect)
 	registerCommand("disconnect", cmdHandler.Logout)
