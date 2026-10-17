@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github-webhook/internal/utils"
 
@@ -44,7 +45,7 @@ var eventSpecs = map[string]eventSpec{
 	"deployment_status":               {"Deployment status", "deployment_status", []string{"state", "description", "environment"}},
 	"deployment_protection_rule":      {"Deployment protection rule", "", []string{"environment", "event"}},
 	"deployment_review":               {"Deployment review", "", []string{"workflow_job_run.environment", "workflow_job_run.status"}},
-	"repository":                      {"Repository", "repository", []string{"description", "default_branch", "visibility"}},
+	"repository":                      {"Repository", "repository", nil},
 	"repository_import":               {"Repository import", "", []string{"status"}},
 	"repository_dispatch":             {"Repository dispatch", "", nil},
 	"repository_ruleset":              {"Repository ruleset", "repository_ruleset", []string{"name", "enforcement", "target"}},
@@ -57,17 +58,17 @@ var eventSpecs = map[string]eventSpec{
 	"security_and_analysis":           {"Security settings updated", "", nil},
 	"branch_protection_rule":          {"Branch protection rule", "rule", []string{"name", "pattern"}},
 	"branch_protection_configuration": {"Branch protection configuration", "", []string{"ref"}},
-	"create":                          {"Reference created", "", []string{"ref_type", "ref", "description"}},
-	"delete":                          {"Reference deleted", "", []string{"ref_type", "ref"}},
-	"fork":                            {"Repository forked", "forkee", []string{"full_name", "description"}},
+	"create":                          {"Reference created", "", nil},
+	"delete":                          {"Reference deleted", "", nil},
+	"fork":                            {"Repository forked", "forkee", nil},
 	"star":                            {"Star", "", nil},
 	"watch":                           {"Watch", "", nil},
 	"public":                          {"Repository made public", "", nil},
 	"member":                          {"Collaborator", "", []string{"member.login"}},
 	"membership":                      {"Team membership", "", []string{"member.login", "team.name", "scope"}},
-	"team":                            {"Team", "team", []string{"name", "description", "privacy"}},
+	"team":                            {"Team", "team", []string{"name", "privacy"}},
 	"team_add":                        {"Team added", "team", []string{"name"}},
-	"organization":                    {"Organization", "organization", []string{"login", "description"}},
+	"organization":                    {"Organization", "organization", []string{"login"}},
 	"org_block":                       {"Organization block", "", []string{"blocked_user.login", "organization.login"}},
 	"user":                            {"User", "user", []string{"login"}},
 	"label":                           {"Label", "label", []string{"name", "description", "color"}},
@@ -202,6 +203,14 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 			heading = "Star removed"
 		}
 	}
+	if name == "create" || name == "delete" {
+		if kind := p.text("ref_type"); kind == "branch" || kind == "tag" {
+			heading = strings.ToUpper(kind[:1]) + kind[1:] + " created"
+			if name == "delete" {
+				heading = strings.ToUpper(kind[:1]) + kind[1:] + " deleted"
+			}
+		}
+	}
 	var b strings.Builder
 	repo := p.object("repository")
 	repoName := cmp.Or(repo.text("full_name"), repo.text("name"))
@@ -227,6 +236,15 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 	if buttonLabel == "" {
 		buttonLabel = "View on GitHub"
 	}
+	if name == "create" || name == "delete" {
+		ref, kind := p.text("ref"), p.text("ref_type")
+		if name == "create" && repoURL != "" && ref != "" && (kind == "branch" || kind == "tag") {
+			targetURL = repoURL + "/tree/" + url.PathEscape(ref)
+			buttonLabel = "View " + strings.ToUpper(kind[:1]) + kind[1:]
+		} else {
+			buttonLabel, targetURL = "View Repository", repoURL
+		}
+	}
 	b.WriteString("<b>" + utils.Link(heading, targetURL) + "</b>\n")
 	if unsupportedAction {
 		b.WriteString(html.EscapeString("Action received: "+utils.Clip(action, 100)+". Open GitHub for details.") + "\n")
@@ -245,7 +263,7 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 		title = "#" + number + " " + title
 	}
 	if title = strings.TrimSpace(title); title != "" {
-		b.WriteString(utils.Link(utils.Clip(title, 240), targetURL) + "\n")
+		b.WriteString("<b>" + utils.Link(utils.Clip(title, 240), targetURL) + "</b>\n")
 	}
 	if repoName != "" {
 		b.WriteString(utils.Link(utils.Clip(repoName, 180), repoURL))
@@ -267,7 +285,7 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 				label = strings.TrimSpace("#" + n + " " + label)
 			}
 			if label != "" {
-				b.WriteString(utils.Link(utils.Clip(label, 240), firstURL(parent.text("html_url"), targetURL)) + "\n")
+				b.WriteString("<b>" + utils.Link(utils.Clip(label, 240), firstURL(parent.text("html_url"), targetURL)) + "</b>\n")
 			}
 			if targetURL == repoURL {
 				targetURL = firstURL(parent.text("html_url"), targetURL)
@@ -276,6 +294,14 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 	}
 	var excerpt string
 	for _, field := range spec.fields {
+		if field == "status" || field == "conclusion" {
+			if name == "workflow_run" || name == "workflow_job" || name == "check_run" || name == "check_suite" {
+				continue
+			}
+		}
+		if field == "state" && !unsupportedAction && action != "" && (name == "issues" || name == "pull_request" || name == "pull_request_target") {
+			continue // Keep the notification focused on the action that occurred.
+		}
 		if (field == "name" || field == "run_number") && (name == "workflow_run" || name == "workflow_job" || name == "check_run") {
 			continue
 		}
@@ -283,6 +309,9 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 			continue
 		}
 		if field == "body" || field == "output.summary" {
+			if name == "discussion" && !unsupportedAction && action != "" && action != "created" && action != "edited" {
+				continue
+			}
 			excerpt, _ = resource.value(field).(string)
 			continue
 		}
@@ -290,7 +319,10 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 		if value == "" {
 			continue
 		}
-		label := map[string]string{"head.ref": "Source branch", "base.ref": "Target branch", "head_branch": "Branch", "target_commitish": "Target", "name": "Name", "state": "State", "run_number": "Run", "sha": "Commit", "head_sha": "Commit", "commit_id": "Commit"}[field]
+		label := map[string]string{"head.ref": "Source branch", "base.ref": "Target branch", "head_branch": "Branch", "target_commitish": "Target", "name": "Name", "state": "State", "state_reason": "Reason", "run_number": "Run", "run_id": "Run", "workflow_name": "Workflow", "event": "Trigger", "sha": "Commit", "head_sha": "Commit", "commit_id": "Commit", "output.title": "Result", "due_on": "Due"}[field]
+		if field == "description" && (name == "deployment" || name == "deployment_status") {
+			label = "Summary"
+		}
 		if label == "" {
 			parts := strings.Split(field, ".")
 			label = strings.ReplaceAll(parts[len(parts)-1], "_", " ")
@@ -300,8 +332,16 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 			continue
 		}
 		value = utils.Clip(value, 200)
-		if strings.Contains(field, "summary") || strings.Contains(field, "description") {
+		if field == "sha" || field == "head_sha" || field == "commit_id" {
+			commitURL := ""
+			if repoURL != "" {
+				commitURL = repoURL + "/commit/" + url.PathEscape(value)
+			}
+			line(label, utils.Link(utils.ShortSHA(value), commitURL))
+		} else if strings.Contains(field, "summary") || strings.Contains(field, "description") {
 			line(label, html.EscapeString(value))
+		} else if field == "state" || field == "state_reason" {
+			line(label, "<b>"+html.EscapeString(strings.ReplaceAll(value, "_", " "))+"</b>")
 		} else {
 			line(label, utils.Code(value))
 		}
@@ -313,9 +353,32 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 			line("Source branch", utils.Code(utils.Clip(source, 160)))
 			line("Target branch", utils.Code(utils.Clip(target, 160)))
 		}
-		for _, item := range []struct{ key, label string }{{"assignee.login", "Assignee"}, {"label.name", "Label"}, {"milestone.title", "Milestone"}, {"requested_reviewer.login", "Reviewer"}, {"requested_team.name", "Review team"}} {
+		for _, item := range []struct{ key, label, actions string }{
+			{"assignee.login", "Assignee", "assigned unassigned"}, {"label.name", "Label", "labeled unlabeled"},
+			{"milestone.title", "Milestone", "milestoned demilestoned"}, {"requested_reviewer.login", "Reviewer", "review_requested review_request_removed"},
+			{"requested_team.name", "Review team", "review_requested review_request_removed"},
+		} {
+			if action != "" && !unsupportedAction && !strings.Contains(" "+item.actions+" ", " "+action+" ") {
+				continue
+			}
 			if v := p.text(item.key); v != "" {
 				line(item.label, utils.Code(utils.Clip(v, 160)))
+			}
+		}
+		if action == "edited" {
+			line("Previous title", html.EscapeString(utils.Clip(p.text("changes.title.from"), 240)))
+		}
+		if name != "issues" && (action == "opened" || action == "reopened" || action == "synchronize" || action == "merged" || action == "ready_for_review") {
+			var counts []string
+			for _, field := range []struct{ key, label string }{{"commits", "Commits"}, {"changed_files", "Files"}, {"additions", "Added"}, {"deletions", "Removed"}} {
+				if value, ok := resource.value(field.key).(json.Number); ok {
+					if count, err := value.Int64(); err == nil && count >= 0 {
+						counts = append(counts, fmt.Sprintf("%s: <b>%d</b>", field.label, count))
+					}
+				}
+			}
+			if len(counts) > 0 {
+				b.WriteString(strings.Join(counts, " · ") + "\n")
 			}
 		}
 		if action == "opened" || action == "edited" {
@@ -323,6 +386,58 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 		}
 	}
 	switch name {
+	case "fork", "star", "watch":
+		if name == "fork" {
+			forkName := cmp.Or(resource.text("full_name"), resource.text("name"))
+			forkURL := utils.SafeURL(resource.text("html_url"))
+			if forkURL == "" && repositoryNamePattern.MatchString(forkName) && !strings.HasSuffix(forkName, "/.") && !strings.HasSuffix(forkName, "/..") {
+				forkURL = "https://github.com/" + forkName
+			}
+			line("Fork", utils.Link(utils.Clip(forkName, 180), forkURL))
+			if forkURL != "" {
+				targetURL = forkURL
+			} else {
+				buttonLabel, targetURL = "View Repository", repoURL
+			}
+		}
+		var counts []string
+		for _, field := range []struct{ key, label string }{{"stargazers_count", "Stars"}, {"forks_count", "Forks"}, {"subscribers_count", "Watchers"}} {
+			if name == "watch" && field.key != "subscribers_count" {
+				continue
+			}
+			if name != "watch" && field.key == "subscribers_count" {
+				continue
+			}
+			if value, ok := repo.value(field.key).(json.Number); ok {
+				if count, err := value.Int64(); err == nil && count >= 0 {
+					counts = append(counts, fmt.Sprintf("%s: <b>%d</b>", field.label, count))
+				}
+			}
+		}
+		if len(counts) > 0 {
+			b.WriteString(strings.Join(counts, " · ") + "\n")
+		}
+	case "create", "delete":
+		ref, kind := p.text("ref"), p.text("ref_type")
+		if kind == "branch" || kind == "tag" {
+			line(strings.ToUpper(kind[:1])+kind[1:], utils.Code(utils.Clip(ref, 200)))
+		} else {
+			line("Type", utils.Code(kind))
+			line("Reference", utils.Code(utils.Clip(ref, 200)))
+		}
+	case "workflow_run", "workflow_job", "check_run", "check_suite":
+		if conclusion := resource.text("conclusion"); conclusion != "" {
+			line("Outcome", "<b>"+html.EscapeString(utils.Clip(strings.ReplaceAll(conclusion, "_", " "), 100))+"</b>")
+		} else if status := resource.text("status"); status != "" {
+			line("Status", "<b>"+html.EscapeString(utils.Clip(strings.ReplaceAll(status, "_", " "), 100))+"</b>")
+		}
+		if name == "workflow_run" {
+			if attempt, ok := resource.value("run_attempt").(json.Number); ok {
+				if count, err := attempt.Int64(); err == nil && count > 1 {
+					line("Attempt", fmt.Sprint(count))
+				}
+			}
+		}
 	case "push":
 		var push gh.PushEvent
 		if json.Unmarshal(body, &push) != nil {
@@ -511,13 +626,15 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 			targetURL = repoURL + "/wiki"
 		}
 	case "deployment_status":
-		line("Environment", utils.Code(p.text("deployment.environment")))
+		if resource.text("environment") == "" {
+			line("Environment", utils.Code(p.text("deployment.environment")))
+		}
 		line("Reference", utils.Code(p.text("deployment.ref")))
 		targetURL = firstURL(p.text("deployment_status.environment_url"), p.text("deployment_status.log_url"), targetURL)
 	case "status":
 		line("Context", html.EscapeString(utils.Clip(p.text("context"), 200)))
 		line("State", utils.Code(p.text("state")))
-		line("Description", html.EscapeString(utils.Clip(p.text("description"), 400)))
+		line("Summary", html.EscapeString(utils.Clip(p.text("description"), 400)))
 		line("Commit", utils.Code(utils.ShortSHA(p.text("sha"))))
 		targetURL = firstURL(p.text("target_url"), p.text("commit.html_url"), repoURL)
 	case "installation_repositories":
@@ -532,18 +649,46 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 			}
 		}
 	case "release":
+		if assets, ok := resource.value("assets").([]any); ok {
+			line("Assets", fmt.Sprintf("<b>%d</b>", len(assets)))
+		}
 		if resource.value("prerelease") == true {
 			line("Type", "Prerelease")
 		}
 		if resource.value("draft") == true {
 			line("State", "Draft")
 		}
-	case "star":
-		line("Stars", html.EscapeString(repo.text("stargazers_count")))
-	case "watch":
-		line("Watchers", html.EscapeString(repo.text("subscribers_count")))
 	case "repository":
 		line("Previous name", utils.Code(p.text("changes.repository.name.from")))
+		line("Previous owner", utils.Code(cmp.Or(p.text("changes.owner.from.user.login"), p.text("changes.owner.from.organization.login"))))
+		if previous := p.text("changes.default_branch.from"); previous != "" {
+			if current := resource.text("default_branch"); current != "" {
+				line("Default branch", utils.Code(previous)+" → "+utils.Code(current))
+			} else {
+				line("Previous default branch", utils.Code(previous))
+			}
+		} else if action == "created" {
+			line("Default branch", utils.Code(resource.text("default_branch")))
+		}
+		if action == "created" || action == "publicized" || action == "privatized" {
+			line("Visibility", utils.Code(resource.text("visibility")))
+		}
+		if p.value("changes.topics") != nil {
+			var topics []string
+			for _, topic := range resource.list("topics") {
+				if value, ok := topic.(string); ok && value != "" {
+					topics = append(topics, utils.Code(utils.Clip(value, 60)))
+					if len(topics) == 8 {
+						break
+					}
+				}
+			}
+			if len(topics) == 0 {
+				line("Topics", "Removed")
+			} else {
+				line("Topics", strings.Join(topics, ", "))
+			}
+		}
 	}
 
 	header := strings.TrimSpace(b.String())
@@ -555,7 +700,16 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 	if name == "push" {
 		message.Source = &gotdbot.RichMessageSourceMarkdown{Text: header}
 	} else if strings.TrimSpace(excerpt) != "" {
-		message.Source = &gotdbot.RichMessageSourceMarkdown{Text: header + "\n\n" + utils.GitHubMarkdown(utils.Clip(excerpt, 8000), repoURL)}
+		content := utils.GitHubMarkdown(utils.Clip(excerpt, 8000), repoURL)
+		if utf8.RuneCountInString(excerpt) > 1000 {
+			summary := map[string]string{
+				"issues": "Issue details", "pull_request": "Pull request details", "pull_request_target": "Pull request details",
+				"issue_comment": "Comment", "pull_request_review_comment": "Review comment", "commit_comment": "Commit comment",
+				"pull_request_review": "Review", "release": "Release notes", "discussion": "Discussion", "discussion_comment": "Comment", "check_run": "Check output",
+			}[name]
+			content = "<details><summary>" + summary + "</summary>\n\n" + content + "\n\n</details>"
+		}
+		message.Source = &gotdbot.RichMessageSourceMarkdown{Text: header + "\n\n" + content}
 	}
 
 	if targetURL == "" {
