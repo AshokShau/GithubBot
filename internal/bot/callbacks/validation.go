@@ -18,7 +18,8 @@ func validSettingsData(data string) bool {
 	case "ls":
 		return len(p) == 2 || len(p) == 3 && positive(p[2])
 	case "ar":
-		return len(p) == 4 && (p[2] == "pg" || p[2] == "id") && positive(p[3])
+		return len(p) == 4 && (p[2] == "pg" || p[2] == "id") && positive(p[3]) ||
+			len(p) == 5 && p[2] == "id" && positive(p[3]) && positive(p[4])
 	case "r":
 		return len(p) == 3 && validRepo(p[2])
 	case "ep", "iev":

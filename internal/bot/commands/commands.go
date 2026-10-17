@@ -92,9 +92,10 @@ func (h *CommandHandler) Connect(c *gotdbot.Client, m *gotdbot.Message) error {
 
 	h.StateCache.Set(state, m.SenderID(), 10*time.Minute)
 
-	url := h.OAuth.GetLoginURL(state)
+	authorizeURL := h.OAuth.GetLoginURL(state)
+	accessURL := "https://github.com/settings/connections/applications/" + url.PathEscape(h.OAuth.OAuthConfig.ClientID)
 
-	msg := `<h3>Connect GitHub</h3><p>Connect your account to manage repositories from Telegram.</p><tg-button-row align="left"><tg-button type="url" url="` + html.EscapeString(url) + `">Authorize GitHub</tg-button></tg-button-row><footer>This link expires in 10 minutes. After connecting, use /addrepo to choose a repository.</footer>`
+	msg := `<h3>Connect GitHub</h3><p>Connect your account to manage repositories from Telegram.</p><tg-button-row align="left"><tg-button type="url" url="` + html.EscapeString(authorizeURL) + `">Authorize GitHub</tg-button><tg-button type="url" url="` + html.EscapeString(accessURL) + `">Organization access</tg-button></tg-button-row><details><summary>Organization repositories</summary><p>First authorize GitHub, then open Organization access to grant access or request approval from an organization owner. Your GitHub account also needs permission to manage repository webhooks.</p><p>If your organization uses SSO, sign in through SSO before authorizing. If access requests are unavailable, contact an organization owner.</p></details><footer>The authorization link expires in 10 minutes. After connecting, use /addrepo to choose a repository.</footer>`
 	_, err = m.ReplyRichMessageHTML(c, msg, nil)
 	return err
 }
@@ -150,8 +151,11 @@ func (h *CommandHandler) AddRepo(c *gotdbot.Client, m *gotdbot.Message) error {
 	}
 
 	if existingLink, _ := h.DB.GetRepoLink(context.Background(), m.ChatId, repoFullName); existingLink != nil {
-		msg := "<b>Repository already linked</b>\n\n" + utils.Code(repoFullName) + "\nUse /settings to change notification events."
-		_, err = m.ReplyText(c, msg, &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+		sent, err := m.ReplyRichMessageHTML(c, settings.RepositoryLinked(repoFullName, existingLink.WebhookID, 1, true), nil)
+		if err == nil {
+			h.MenuOwners.Cleanup()
+			h.MenuOwners.Set([2]int64{sent.ChatId, sent.Id}, m.SenderID(), 30*time.Minute)
+		}
 		return err
 	}
 
@@ -235,8 +239,11 @@ func (h *CommandHandler) AddRepo(c *gotdbot.Client, m *gotdbot.Message) error {
 		return err
 	}
 
-	msg := "<b>Repository linked</b>\n\n" + utils.Code(repoFullName) + "\nUse /settings to choose notification events."
-	_, err = m.ReplyText(c, msg, &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	sent, err := m.ReplyRichMessageHTML(c, settings.RepositoryLinked(repoFullName, webhookID, 1, false), nil)
+	if err == nil {
+		h.MenuOwners.Cleanup()
+		h.MenuOwners.Set([2]int64{sent.ChatId, sent.Id}, m.SenderID(), 30*time.Minute)
+	}
 	return err
 }
 
@@ -266,23 +273,18 @@ func (h *CommandHandler) sendRepoList(c *gotdbot.Client, m *gotdbot.Message, pag
 		return nil
 	}
 
-	opts := &github.RepositoryListOptions{
+	opts := &github.RepositoryListByAuthenticatedUserOptions{
 		Sort:      "updated",
 		Direction: "desc",
 		PerPage:   5, Page: page,
 	}
 
-	repos, resp, err := client.Repositories.List(context.Background(), "", opts)
+	repos, resp, err := client.Repositories.ListByAuthenticatedUser(context.Background(), opts)
 	if err != nil {
 		if h.handleAuthError(c, m, err) {
 			return nil
 		}
 		_, _ = m.ReplyText(c, "Could not fetch repositories from GitHub. Please try again later.", nil)
-		return nil
-	}
-
-	if len(repos) == 0 && page == 1 {
-		_, _ = m.ReplyText(c, "No accessible repositories found. Check the connected GitHub account and its repository permissions.", nil)
 		return nil
 	}
 

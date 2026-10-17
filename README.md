@@ -124,6 +124,7 @@ OWNER_ID=123456789
 
 1.  **Start the Bot**: Send `/start` in Telegram.
 2.  **Connect GitHub**: Send `/connect` (in a private chat) to authenticate with your GitHub account via OAuth.
+    *   For organization repositories, authorize GitHub first, then use **Organization access** in `/connect` to grant access or request organization-owner approval on GitHub. Your GitHub account also needs permission to manage repository webhooks. For SSO organizations, sign in through SSO before authorizing.
 3.  **Add Repositories**:
     *   In a group/channel: `/addrepo owner/repo` (or alias `/add owner/repo`).
     *   Or send `/addrepo` without arguments to select interactively from your accessible GitHub repositories.

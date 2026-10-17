@@ -119,7 +119,11 @@ func (h *CallbackHandler) HandleSettings(c *gotdbot.Client, u *gotdbot.UpdateNew
 			}
 			if subAction == "id" {
 				repoID, _ := strconv.ParseInt(parts[3], 10, 64)
-				return h.handleAddRepoByID(c, u, repoID)
+				page := 1
+				if len(parts) == 5 {
+					page, _ = strconv.Atoi(parts[4])
+				}
+				return h.handleAddRepoByID(c, u, repoID, page)
 			}
 		}
 
@@ -432,13 +436,13 @@ func (h *CallbackHandler) handleRepoPage(c *gotdbot.Client, u *gotdbot.UpdateNew
 		_ = u.Answer(c, "GitHub is unavailable. Please try again later.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
-	opts := &gh.RepositoryListOptions{
+	opts := &gh.RepositoryListByAuthenticatedUserOptions{
 		Sort:      "updated",
 		Direction: "desc",
 		PerPage:   5, Page: page,
 	}
 
-	repos, resp, err := ghClient.Repositories.List(context.Background(), "", opts)
+	repos, resp, err := ghClient.Repositories.ListByAuthenticatedUser(context.Background(), opts)
 	if err != nil {
 		if h.handleAuthError(c, u, err) {
 			return nil
@@ -454,7 +458,7 @@ func (h *CallbackHandler) handleRepoPage(c *gotdbot.Client, u *gotdbot.UpdateNew
 	return err
 }
 
-func (h *CallbackHandler) handleAddRepoByID(c *gotdbot.Client, u *gotdbot.UpdateNewCallbackQuery, repoID int64) error {
+func (h *CallbackHandler) handleAddRepoByID(c *gotdbot.Client, u *gotdbot.UpdateNewCallbackQuery, repoID int64, page int) error {
 	user, err := h.DB.GetUserByTelegramID(context.Background(), u.SenderUserId)
 	if err != nil || user == nil || user.EncryptedOAuthToken == "" {
 		if err != nil && !errors.Is(err, mongo.ErrNoDocuments) {
@@ -482,10 +486,8 @@ func (h *CallbackHandler) handleAddRepoByID(c *gotdbot.Client, u *gotdbot.Update
 	}
 
 	if existingLink, _ := h.DB.GetRepoLink(context.Background(), u.ChatId, repo.GetFullName()); existingLink != nil {
-		_ = u.Answer(c, fmt.Sprintf("Repository %s is already linked to this chat.", repo.GetFullName()), &gotdbot.CallbackAnswerOpts{ShowAlert: true})
-		_, err = u.EditMessageText(c, "<b>Repository already linked</b>\n\n"+utils.Code(repo.GetFullName())+"\nUse /settings to change notification events.", &gotdbot.EditMessageTextOpts{
-			ParseMode: gotdbot.ParseModeHTML,
-		})
+		_ = u.Answer(c, "", nil)
+		_, err = u.EditRichMessageHTML(c, settings.RepositoryLinked(repo.GetFullName(), existingLink.WebhookID, page, true), &gotdbot.EditRichTextOpts{})
 		return err
 	}
 
@@ -545,9 +547,8 @@ func (h *CallbackHandler) handleAddRepoByID(c *gotdbot.Client, u *gotdbot.Update
 		return nil
 	}
 
-	_, err = u.EditMessageText(c, "<b>Repository linked</b>\n\n"+utils.Code(repo.GetFullName())+"\nUse /settings to choose notification events.", &gotdbot.EditMessageTextOpts{
-		ParseMode: gotdbot.ParseModeHTML,
-	})
+	_ = u.Answer(c, "", nil)
+	_, err = u.EditRichMessageHTML(c, settings.RepositoryLinked(repo.GetFullName(), webhookID, page, false), &gotdbot.EditRichTextOpts{})
 	return err
 }
 

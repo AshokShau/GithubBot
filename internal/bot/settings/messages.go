@@ -19,18 +19,53 @@ const pageSize = 6
 
 // DiscoveryPage is shared by the initial /addrepo reply and its pagination edits.
 func DiscoveryPage(repos []*gh.Repository, response *gh.Response, page int) string {
+	page = max(page, 1)
+	repos = slices.Clone(repos)
+	repos = slices.DeleteFunc(repos, func(repo *gh.Repository) bool { return repo.GetID() <= 0 || repo.GetFullName() == "" })
+	slices.SortFunc(repos, func(a, b *gh.Repository) int { return strings.Compare(a.GetFullName(), b.GetFullName()) })
 	var b strings.Builder
 	b.WriteString("<h3>Link a repository</h3>")
 	if len(repos) == 0 {
-		b.WriteString("<p>No accessible repositories on this page. Go back, or check your GitHub account's repository permissions.</p>")
+		if page > 1 {
+			b.WriteString("<p>No accessible repositories on this page. Use Previous, or check your GitHub account's repository permissions.</p>")
+		} else {
+			b.WriteString("<p>No accessible repositories found. Check the connected GitHub account and its repository permissions.</p>")
+		}
 	} else {
 		b.WriteString("<p>Choose a repository to receive notifications here.</p>")
 	}
+	ownerGroup, inRow, rowWidth := "", 0, 0
 	for _, repo := range repos {
-		if repo.GetID() <= 0 || repo.GetFullName() == "" {
-			continue
+		owner, name, ok := strings.Cut(repo.GetFullName(), "/")
+		if !ok || owner == "" || name == "" {
+			owner, name = "Repositories", repo.GetFullName()
 		}
-		fmt.Fprintf(&b, `<tg-button-row align="left"><tg-button type="callback_data" data="c:ar:id:%d">%s</tg-button></tg-button-row>`, repo.GetID(), html.EscapeString(utils.Clip(repo.GetFullName(), 160)))
+		label := utils.Clip(name, 100)
+		width := utf8.RuneCountInString(label)
+		if owner != ownerGroup || inRow != 0 && rowWidth+width > 32 {
+			if inRow != 0 {
+				b.WriteString("</tg-button-row>")
+				inRow = 0
+			}
+		}
+		if owner != ownerGroup {
+			fmt.Fprintf(&b, "<p><b>%s</b></p>", html.EscapeString(utils.Clip(owner, 80)))
+			ownerGroup = owner
+		}
+		if inRow == 0 {
+			b.WriteString(`<tg-button-row align="left">`)
+			rowWidth = 0
+		}
+		fmt.Fprintf(&b, `<tg-button type="callback_data" data="c:ar:id:%d:%d">%s</tg-button>`, repo.GetID(), page, html.EscapeString(label))
+		inRow++
+		rowWidth += width
+		if inRow == 2 || width > 24 {
+			b.WriteString("</tg-button-row>")
+			inRow = 0
+		}
+	}
+	if inRow != 0 {
+		b.WriteString("</tg-button-row>")
 	}
 	prev, next, last := 0, 0, 0
 	if response != nil {
@@ -56,6 +91,19 @@ func DiscoveryPage(repos []*gh.Repository, response *gh.Response, page int) stri
 		b.WriteString("</tg-button-row>")
 	}
 	return b.String()
+}
+
+func RepositoryLinked(repo string, hookID int64, page int, alreadyLinked bool) string {
+	heading := "Repository linked"
+	if alreadyLinked {
+		heading = "Repository already linked"
+	}
+	settingsData := "c:ls"
+	if hookID > 0 {
+		settingsData = fmt.Sprintf("c:r:%d", hookID)
+	}
+	return fmt.Sprintf(`<h3>%s</h3><p>%s</p><p>Choose Settings to change notification events, or go back to link another repository.</p><tg-button-row align="left"><tg-button type="callback_data" data="c:ar:pg:%d">Back</tg-button><tg-button type="callback_data" data="%s">Settings</tg-button></tg-button-row>`,
+		heading, utils.Code(repo), max(page, 1), settingsData)
 }
 
 // LinkedRepositoryPage keeps URL navigation in one rich message. A page of
