@@ -14,7 +14,7 @@ func validSettingsData(data string) bool {
 	positive := func(s string) bool { n, err := strconv.ParseInt(s, 10, 64); return err == nil && n > 0 }
 	switch p[1] {
 	case "ls":
-		return len(p) == 2
+		return len(p) == 2 || len(p) == 3 && positive(p[2])
 	case "ar":
 		return len(p) == 4 && (p[2] == "pg" || p[2] == "id") && positive(p[3])
 	case "r":
@@ -37,6 +37,9 @@ func validSettingsData(data string) bool {
 	return false
 }
 func validRepo(repo string) bool {
+	if id, err := strconv.ParseInt(repo, 10, 64); err == nil && id > 0 {
+		return true
+	}
 	p := strings.Split(repo, "/")
 	return len(p) == 2 && p[0] != "" && p[1] != ""
 }

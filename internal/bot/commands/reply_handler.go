@@ -44,6 +44,10 @@ func (h *ReplyHandler) HandleReply(c *gotdbot.Client, msg *gotdbot.Message) erro
 	if !found || mContext.Type == "workflow" {
 		return nil
 	}
+	replied, replyErr := msg.GetRepliedMessage(c)
+	if replyErr != nil || replied == nil || c.Me == nil || replied.SenderID() != c.Me.Id || replied.ChatId != msg.ChatId {
+		return nil
+	}
 
 	if (mContext.Type == "discussion" || mContext.Type == "discussion_comment") && mContext.DiscussionNodeID == "" {
 		_, err := msg.ReplyText(c, "This discussion cannot be updated from this notification. Open it on GitHub to comment.", nil)

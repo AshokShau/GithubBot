@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github-webhook/internal/bot/settings"
 	"github-webhook/internal/cache"
 	"github-webhook/internal/config"
 	"github-webhook/internal/db"
@@ -43,9 +44,10 @@ type CommandHandler struct {
 	AdminCache      *cache.Cache[int64, []int64]
 	ReloadRateLimit *cache.Cache[int64, time.Time]
 	ContextCache    *cache.Cache[string, models.MessageContext]
+	MenuOwners      *cache.Cache[[2]int64, int64]
 }
 
-func NewCommandHandler(cfg *config.Config, database *db.DB, oauth *gh.OAuth, stateCache *cache.Cache[string, int64], factory *gh.ClientFactory, key string, ctxCache *cache.Cache[string, models.MessageContext], adminCache *cache.Cache[int64, []int64], reloadLimit *cache.Cache[int64, time.Time]) *CommandHandler {
+func NewCommandHandler(cfg *config.Config, database *db.DB, oauth *gh.OAuth, stateCache *cache.Cache[string, int64], factory *gh.ClientFactory, key string, ctxCache *cache.Cache[string, models.MessageContext], adminCache *cache.Cache[int64, []int64], reloadLimit *cache.Cache[int64, time.Time], menuOwners *cache.Cache[[2]int64, int64]) *CommandHandler {
 	return &CommandHandler{
 		Config:          cfg,
 		DB:              database,
@@ -56,6 +58,7 @@ func NewCommandHandler(cfg *config.Config, database *db.DB, oauth *gh.OAuth, sta
 		AdminCache:      adminCache,
 		ReloadRateLimit: reloadLimit,
 		ContextCache:    ctxCache,
+		MenuOwners:      menuOwners,
 	}
 }
 
@@ -324,10 +327,14 @@ func (h *CommandHandler) sendRepoList(c *gotdbot.Client, m *gotdbot.Message, pag
 		kb = append(kb, navRow)
 	}
 
-	_, err = m.ReplyText(c, fmt.Sprintf("<b>Link a repository</b>\n\nChoose a repository · Page %d", page), &gotdbot.SendMessageOpts{
+	sent, err := m.ReplyText(c, fmt.Sprintf("<b>Link a repository</b>\n\nChoose a repository · Page %d", page), &gotdbot.SendMessageOpts{
 		ParseMode:             gotdbot.ParseModeHTML,
 		ReplyMarkup:           &gotdbot.ReplyMarkupInlineKeyboard{Rows: kb},
 		DisableWebPagePreview: true})
+	if err == nil {
+		h.MenuOwners.Cleanup()
+		h.MenuOwners.Set([2]int64{sent.ChatId, sent.Id}, m.SenderID(), 30*time.Minute)
+	}
 	return err
 }
 
@@ -344,22 +351,11 @@ func (h *CommandHandler) Settings(c *gotdbot.Client, m *gotdbot.Message) error {
 		return replyErr
 	}
 
-	if len(links) == 0 {
-		_, err = m.ReplyText(c, "No repositories linked. Use /addrepo to link one.", nil)
-		return err
+	sent, err := m.ReplyRichMessageHTML(c, settings.RepositoryPage(links, 1), nil)
+	if err == nil {
+		h.MenuOwners.Cleanup()
+		h.MenuOwners.Set([2]int64{sent.ChatId, sent.Id}, m.SenderID(), 30*time.Minute)
 	}
-
-	var kb [][]gotdbot.InlineKeyboardButton
-	for _, l := range links {
-		kb = append(kb, []gotdbot.InlineKeyboardButton{
-			{Text: l.RepoFullName, Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:r:%s", l.RepoFullName)}},
-		})
-	}
-
-	_, err = m.ReplyText(c, "<b>Notification settings</b>\n\nChoose a repository.", &gotdbot.SendMessageOpts{
-		ParseMode:             gotdbot.ParseModeHTML,
-		ReplyMarkup:           &gotdbot.ReplyMarkupInlineKeyboard{Rows: kb},
-		DisableWebPagePreview: true})
 	return err
 }
 
@@ -673,6 +669,10 @@ func (h *CommandHandler) Approve(c *gotdbot.Client, m *gotdbot.Message) error {
 		_, err := m.ReplyText(c, "Please use this command in reply to a notification.", nil)
 		return err
 	}
+	client, err := h.getAuthenticatedClient(c, m)
+	if err != nil {
+		return nil
+	}
 
 	key := fmt.Sprintf("%d:%d", m.ChatId, m.ReplyToMessageID())
 	mContext, found := h.ContextCache.Get(key)
@@ -684,11 +684,6 @@ func (h *CommandHandler) Approve(c *gotdbot.Client, m *gotdbot.Message) error {
 	if !strings.HasPrefix(mContext.Type, "pr") {
 		_, err := m.ReplyText(c, "This command requires a pull request. Reply to a recent pull request notification.", nil)
 		return err
-	}
-
-	client, err := h.getAuthenticatedClient(c, m)
-	if err != nil {
-		return nil
 	}
 
 	review := &github.PullRequestReviewRequest{
@@ -714,6 +709,10 @@ func (h *CommandHandler) handleIssueAction(c *gotdbot.Client, m *gotdbot.Message
 		_, err := m.ReplyText(c, "Please use this command in reply to a notification.", nil)
 		return err
 	}
+	client, err := h.getAuthenticatedClient(c, m)
+	if err != nil {
+		return nil
+	}
 
 	key := fmt.Sprintf("%d:%d", m.ChatId, m.ReplyToMessageID())
 	mContext, found := h.ContextCache.Get(key)
@@ -725,10 +724,6 @@ func (h *CommandHandler) handleIssueAction(c *gotdbot.Client, m *gotdbot.Message
 	if mContext.IssueNumber <= 0 || mContext.Type == "discussion" || mContext.Type == "discussion_comment" || mContext.Type == "workflow" {
 		_, err := m.ReplyText(c, "This action requires an issue or pull request. Reply to a recent issue or pull request notification.", nil)
 		return err
-	}
-	client, err := h.getAuthenticatedClient(c, m)
-	if err != nil {
-		return nil
 	}
 
 	req := github.UpdateIssueRequest{State: &state}
@@ -755,6 +750,12 @@ func (h *CommandHandler) handleIssueAction(c *gotdbot.Client, m *gotdbot.Message
 }
 
 func (h *CommandHandler) getAuthenticatedClient(c *gotdbot.Client, m *gotdbot.Message) (*github.Client, error) {
+	if m.ReplyToMessageID() != 0 {
+		replied, err := m.GetRepliedMessage(c)
+		if err != nil || replied == nil || c.Me == nil || replied.SenderID() != c.Me.Id || replied.ChatId != m.ChatId {
+			return nil, errors.New("reply is not a notification from this bot")
+		}
+	}
 	user, err := h.DB.GetUserByTelegramID(context.Background(), m.SenderID())
 	if err != nil && !errors.Is(err, mongo.ErrNoDocuments) {
 		c.Logger.Warnf("Could not load your GitHub connection: %s", utils.ErrorDetails(err))

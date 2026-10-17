@@ -40,6 +40,7 @@ func main() {
 	actionCache := cache.New[string, models.PRActionContext]()
 	adminCache := cache.New[int64, []int64]()
 	reloadRateLimit := cache.New[int64, time.Time]()
+	menuOwners := cache.New[[2]int64, int64]()
 
 	// TODO: add cfg.ApiID or cfg.ApiHash
 
@@ -69,7 +70,7 @@ func main() {
 	}
 
 	// Commands
-	cmdHandler := commands.NewCommandHandler(cfg, database, oauth, oauthStateCache, clientFactory, cfg.EncryptionKey, contextCache, adminCache, reloadRateLimit)
+	cmdHandler := commands.NewCommandHandler(cfg, database, oauth, oauthStateCache, clientFactory, cfg.EncryptionKey, contextCache, adminCache, reloadRateLimit, menuOwners)
 	registerCommand("start", cmdHandler.Start)
 	registerCommand("connect", cmdHandler.Connect)
 	registerCommand("disconnect", cmdHandler.Logout)
@@ -173,7 +174,7 @@ func main() {
 		return nil
 	}, nil)
 
-	cbHandler := callbacks.NewCallbackHandler(cfg, database, clientFactory, cfg.EncryptionKey, actionCache, adminCache)
+	cbHandler := callbacks.NewCallbackHandler(cfg, database, clientFactory, cfg.EncryptionKey, actionCache, adminCache, menuOwners)
 	bot.OnUpdateNewCallbackQuery(func(c *gotdbot.Client, u *gotdbot.UpdateNewCallbackQuery) error {
 		data := u.DataString()
 		if strings.HasPrefix(data, "c:") {

@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
+	"github-webhook/internal/bot/settings"
 	"github-webhook/internal/cache"
 	"github-webhook/internal/config"
 	"github-webhook/internal/db"
@@ -27,9 +30,10 @@ type CallbackHandler struct {
 	EncryptionKey string
 	ActionCache   *cache.Cache[string, models.PRActionContext]
 	AdminCache    *cache.Cache[int64, []int64]
+	MenuOwners    *cache.Cache[[2]int64, int64]
 }
 
-func NewCallbackHandler(cfg *config.Config, database *db.DB, factory *github.ClientFactory, key string, actionCache *cache.Cache[string, models.PRActionContext], adminCache *cache.Cache[int64, []int64]) *CallbackHandler {
+func NewCallbackHandler(cfg *config.Config, database *db.DB, factory *github.ClientFactory, key string, actionCache *cache.Cache[string, models.PRActionContext], adminCache *cache.Cache[int64, []int64], menuOwners *cache.Cache[[2]int64, int64]) *CallbackHandler {
 	return &CallbackHandler{
 		Config:        cfg,
 		DB:            database,
@@ -37,6 +41,7 @@ func NewCallbackHandler(cfg *config.Config, database *db.DB, factory *github.Cli
 		EncryptionKey: key,
 		ActionCache:   actionCache,
 		AdminCache:    adminCache,
+		MenuOwners:    menuOwners,
 	}
 }
 
@@ -55,10 +60,19 @@ func (h *CallbackHandler) HandleSettings(c *gotdbot.Client, u *gotdbot.UpdateNew
 	if !validSettingsData(u.DataString()) {
 		return u.Answer(c, "This interaction is invalid or expired. Open /settings or /addrepo again.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 	}
+	key := [2]int64{u.ChatId, u.MessageId}
+	owner, found := h.MenuOwners.Get(key)
+	if !found {
+		return u.Answer(c, "This menu has expired. Open /settings or /addrepo again.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
+	}
+	if owner != u.SenderUserId {
+		return u.Answer(c, "This menu belongs to another user. Open /settings to use your own menu.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
+	}
 	if !u.IsPrivate() && !utils.IsAdmin(c, u.ChatId, u.SenderUserId, h.AdminCache) {
 		_ = u.Answer(c, "Telegram administrator access is required to change settings.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 		return nil
 	}
+	h.MenuOwners.Set(key, owner, 30*time.Minute)
 
 	data := u.DataString()
 	parts := strings.Split(data, ":")
@@ -72,7 +86,11 @@ func (h *CallbackHandler) HandleSettings(c *gotdbot.Client, u *gotdbot.UpdateNew
 
 	if prefix == "c" {
 		if action == "ls" {
-			return h.showRepoList(c, u)
+			page := 1
+			if len(parts) == 3 {
+				page, _ = strconv.Atoi(parts[2])
+			}
+			return h.showRepoList(c, u, page)
 		}
 		if action == "ar" {
 			if len(parts) < 3 {
@@ -94,8 +112,15 @@ func (h *CallbackHandler) HandleSettings(c *gotdbot.Client, u *gotdbot.UpdateNew
 		}
 
 		repoName := parts[2]
-		link, err := h.DB.GetRepoLink(context.Background(), u.ChatId, repoName)
-		if err != nil {
+		links, err := h.DB.GetChatLinks(context.Background(), u.ChatId)
+		var link *models.RepoLink
+		for i := range links {
+			if links[i].RepoFullName == repoName || links[i].WebhookID > 0 && fmt.Sprint(links[i].WebhookID) == repoName {
+				link = &links[i]
+				break
+			}
+		}
+		if err != nil || link == nil {
 			_ = u.Answer(c, "Repository link unavailable. Open /settings again or use /addrepo.", &gotdbot.CallbackAnswerOpts{ShowAlert: false})
 			return nil
 		}
@@ -221,28 +246,14 @@ func (h *CallbackHandler) HandleSettings(c *gotdbot.Client, u *gotdbot.UpdateNew
 }
 
 func (h *CallbackHandler) showRepoMenu(c *gotdbot.Client, u *gotdbot.UpdateNewCallbackQuery, l *models.RepoLink) error {
-	kb := &gotdbot.ReplyMarkupInlineKeyboard{
-		Rows: [][]gotdbot.InlineKeyboardButton{
-			{
-				{Text: "Push only", Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:presets:%s:push", l.RepoFullName)}},
-			},
-			{
-				{Text: "All events", Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:presets:%s:all", l.RepoFullName)}},
-			},
-			{
-				{Text: "Choose events", Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:iev:%s:1", l.RepoFullName)}},
-			},
-			{
-				{Text: "Repositories", Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: []byte("c:ls")}},
-			},
-		},
+	repo := html.EscapeString(l.RepoFullName)
+	if l.WebhookID > 0 {
+		repo = fmt.Sprint(l.WebhookID)
 	}
-
+	text := "<p><b>Notification settings</b><br>" + utils.Code(l.RepoFullName) + "</p><p>Choose a preset or select individual events.</p>" +
+		fmt.Sprintf(`<p><tg-button type="callback_data" data="c:presets:%s:push">Push only</tg-button> <tg-button type="callback_data" data="c:presets:%s:all">All events</tg-button></p><p><tg-button type="callback_data" data="c:iev:%s:1">Choose events</tg-button> <tg-button type="callback_data" data="c:ls">Repositories</tg-button></p>`, repo, repo, repo)
 	_ = u.Answer(c, "", nil)
-	_, err := u.EditMessageText(c, "<b>Notification settings</b>\n"+utils.Code(l.RepoFullName)+"\n\nChoose a preset or select individual events.", &gotdbot.EditMessageTextOpts{
-		ReplyMarkup: kb,
-		ParseMode:   gotdbot.ParseModeHTML,
-	})
+	_, err := u.EditRichMessageHTML(c, text, &gotdbot.EditRichTextOpts{})
 	return err
 }
 
@@ -312,43 +323,34 @@ func (h *CallbackHandler) handlePresets(c *gotdbot.Client, u *gotdbot.UpdateNewC
 		responseText = "<b>Notifications updated</b>\n" + utils.Code(l.RepoFullName) + "\n\nPush events only."
 	}
 
-	kb := &gotdbot.ReplyMarkupInlineKeyboard{
-		Rows: [][]gotdbot.InlineKeyboardButton{
-			{{Text: "Back", Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:r:%s", l.RepoFullName)}}},
-		},
+	key := l.RepoFullName
+	if l.WebhookID > 0 {
+		key = fmt.Sprint(l.WebhookID)
 	}
-
+	responseText = "<p>" + strings.ReplaceAll(responseText, "\n", "<br>") + "</p>" +
+		fmt.Sprintf(`<p><tg-button type="callback_data" data="%s">Back</tg-button></p>`, html.EscapeString("c:r:"+key))
 	_ = u.Answer(c, "", nil)
-	_, err = u.EditMessageText(c, responseText, &gotdbot.EditMessageTextOpts{
-		ReplyMarkup: kb,
-		ParseMode:   gotdbot.ParseModeHTML,
-	})
+	_, err = u.EditRichMessageHTML(c, responseText, &gotdbot.EditRichTextOpts{})
 	return err
 }
 
 func (h *CallbackHandler) showIndividualEvents(c *gotdbot.Client, u *gotdbot.UpdateNewCallbackQuery, l *models.RepoLink, page int) error {
 	user, err := h.DB.GetUserByTelegramID(context.Background(), u.SenderUserId)
 	if err != nil || user == nil || user.EncryptedOAuthToken == "" {
-		_ = u.Answer(c, "", nil)
 		if err != nil && !errors.Is(err, mongo.ErrNoDocuments) {
 			c.Logger.Warnf("Load GitHub connection: %s", utils.ErrorDetails(err))
 		}
-		_, _ = u.EditMessageText(c, utils.ConnectionError(err), nil)
-		return nil
+		return u.Answer(c, utils.ConnectionError(err), &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 	}
 
 	token, err := utils.Decrypt(user.EncryptedOAuthToken, h.EncryptionKey)
 	if err != nil {
-		_ = u.Answer(c, "", nil)
-		_, _ = u.EditMessageText(c, "GitHub authorization is unavailable. Use /connect to reconnect.", nil)
-		return nil
+		return u.Answer(c, "GitHub authorization is unavailable. Use /connect to reconnect.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 	}
 
 	ghClient, err := h.ClientFactory.GetUserClient(context.Background(), token)
 	if err != nil {
-		_ = u.Answer(c, "", nil)
-		_, _ = u.EditMessageText(c, "GitHub is unavailable. Please try again later.", nil)
-		return nil
+		return u.Answer(c, "GitHub is unavailable. Please try again later.", &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 	}
 	parts := strings.Split(l.RepoFullName, "/")
 	if len(parts) != 2 {
@@ -361,10 +363,8 @@ func (h *CallbackHandler) showIndividualEvents(c *gotdbot.Client, u *gotdbot.Upd
 		if h.handleAuthError(c, u, err) {
 			return nil
 		}
-		_ = u.Answer(c, "", nil)
 		c.Logger.Warnf("Could not fetch webhook settings: %s", utils.ErrorDetails(err))
-		_, _ = u.EditMessageText(c, utils.OperationError("Could not fetch webhook settings", err), nil)
-		return nil
+		return u.Answer(c, utils.OperationError("Could not fetch webhook settings", err), &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 	}
 
 	enabledEvents := make(map[string]bool)
@@ -380,78 +380,19 @@ func (h *CallbackHandler) showIndividualEvents(c *gotdbot.Client, u *gotdbot.Upd
 		}
 	}
 
-	var rows [][]gotdbot.InlineKeyboardButton
-	var row []gotdbot.InlineKeyboardButton
-
-	for _, e := range github.SupportedEvents {
-		status := "Off"
-		if enabledEvents[e.Name] {
-			status = "On"
-		}
-
-		cbData := fmt.Sprintf("c:te:%s:%s:%d", l.RepoFullName, e.Short, page)
-		btnText := fmt.Sprintf("%s %s", status, e.Label)
-
-		row = append(row, gotdbot.InlineKeyboardButton{
-			Text: btnText,
-			Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: []byte(cbData)},
-		})
-
-		if len(row) == 2 {
-			rows = append(rows, row)
-			row = []gotdbot.InlineKeyboardButton{}
-		}
-	}
-	if len(row) > 0 {
-		rows = append(rows, row)
-	}
-
-	webhookSettingsURL := fmt.Sprintf("https://github.com/%s/%s/settings/hooks/%d", owner, repoName, l.WebhookID)
-	rows = append(rows, []gotdbot.InlineKeyboardButton{
-		{Text: "GitHub settings", Type: &gotdbot.InlineKeyboardButtonTypeUrl{Url: webhookSettingsURL}},
-	})
-
-	rows = append(rows, []gotdbot.InlineKeyboardButton{
-		{Text: "Back", Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:r:%s", l.RepoFullName)}},
-	})
-
-	kb := &gotdbot.ReplyMarkupInlineKeyboard{Rows: rows}
-
 	_ = u.Answer(c, "", nil)
-	_, err = u.EditMessageText(c, "<b>Notification events</b>\n"+utils.Code(l.RepoFullName)+"\n\nSelect the events to receive. Changing a selection replaces an all-events subscription with individual events.", &gotdbot.EditMessageTextOpts{
-		ReplyMarkup: kb,
-		ParseMode:   gotdbot.ParseModeHTML,
-	})
+	_, err = u.EditRichMessageHTML(c, settings.EventsPage(l.RepoFullName, l.WebhookID, enabledEvents, page), &gotdbot.EditRichTextOpts{})
 	return err
 }
 
-func (h *CallbackHandler) showRepoList(c *gotdbot.Client, u *gotdbot.UpdateNewCallbackQuery) error {
+func (h *CallbackHandler) showRepoList(c *gotdbot.Client, u *gotdbot.UpdateNewCallbackQuery, page int) error {
 	links, err := h.DB.GetChatLinks(context.Background(), u.ChatId)
 	if err != nil {
 		c.Logger.Warnf("Could not load linked repositories: %s", utils.ErrorDetails(err))
 		return u.Answer(c, utils.OperationError("Could not load linked repositories", err), &gotdbot.CallbackAnswerOpts{ShowAlert: true})
 	}
-
-	if len(links) == 0 {
-		_ = u.Answer(c, "", nil)
-		_, err = u.EditMessageText(c, "No repositories linked. Use /addrepo to link one.", nil)
-		return err
-	}
-
-	var rows [][]gotdbot.InlineKeyboardButton
-	for _, l := range links {
-		rows = append(rows, []gotdbot.InlineKeyboardButton{
-			{Text: l.RepoFullName, Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:r:%s", l.RepoFullName)}},
-		})
-	}
-
-	kb := &gotdbot.ReplyMarkupInlineKeyboard{Rows: rows}
-
 	_ = u.Answer(c, "", nil)
-	_, err = u.EditMessageText(c, "<b>Notification settings</b>\n\nChoose a repository.", &gotdbot.EditMessageTextOpts{
-		ParseMode:   gotdbot.ParseModeHTML,
-		ReplyMarkup: kb,
-	})
+	_, err = u.EditRichMessageHTML(c, settings.RepositoryPage(links, page), &gotdbot.EditRichTextOpts{})
 	return err
 }
 
