@@ -8,10 +8,12 @@ import (
 	"html"
 	"math"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
+	"github-webhook/internal/bot/settings"
 	"github-webhook/internal/cache"
 	"github-webhook/internal/config"
 	"github-webhook/internal/db"
@@ -43,9 +45,10 @@ type CommandHandler struct {
 	AdminCache      *cache.Cache[int64, []int64]
 	ReloadRateLimit *cache.Cache[int64, time.Time]
 	ContextCache    *cache.Cache[string, models.MessageContext]
+	MenuOwners      *cache.Cache[[2]int64, int64]
 }
 
-func NewCommandHandler(cfg *config.Config, database *db.DB, oauth *gh.OAuth, stateCache *cache.Cache[string, int64], factory *gh.ClientFactory, key string, ctxCache *cache.Cache[string, models.MessageContext], adminCache *cache.Cache[int64, []int64], reloadLimit *cache.Cache[int64, time.Time]) *CommandHandler {
+func NewCommandHandler(cfg *config.Config, database *db.DB, oauth *gh.OAuth, stateCache *cache.Cache[string, int64], factory *gh.ClientFactory, key string, ctxCache *cache.Cache[string, models.MessageContext], adminCache *cache.Cache[int64, []int64], reloadLimit *cache.Cache[int64, time.Time], menuOwners *cache.Cache[[2]int64, int64]) *CommandHandler {
 	return &CommandHandler{
 		Config:          cfg,
 		DB:              database,
@@ -56,6 +59,7 @@ func NewCommandHandler(cfg *config.Config, database *db.DB, oauth *gh.OAuth, sta
 		AdminCache:      adminCache,
 		ReloadRateLimit: reloadLimit,
 		ContextCache:    ctxCache,
+		MenuOwners:      menuOwners,
 	}
 }
 
@@ -90,8 +94,8 @@ func (h *CommandHandler) Connect(c *gotdbot.Client, m *gotdbot.Message) error {
 
 	url := h.OAuth.GetLoginURL(state)
 
-	msg := "<b>Connect GitHub</b>\n\n" + utils.Link("Authorize your GitHub account", url) + "\n\nThis link expires in 10 minutes. After connecting, use /addrepo to choose a repository."
-	_, err = m.ReplyText(c, msg, &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	msg := `<h3>Connect GitHub</h3><p>Connect your account to manage repositories from Telegram.</p><tg-button-row align="left"><tg-button type="url" url="` + html.EscapeString(url) + `">Authorize GitHub</tg-button></tg-button-row><footer>This link expires in 10 minutes. After connecting, use /addrepo to choose a repository.</footer>`
+	_, err = m.ReplyRichMessageHTML(c, msg, nil)
 	return err
 }
 
@@ -282,52 +286,11 @@ func (h *CommandHandler) sendRepoList(c *gotdbot.Client, m *gotdbot.Message, pag
 		return nil
 	}
 
-	var kb [][]gotdbot.InlineKeyboardButton
-	for _, repo := range repos {
-		kb = append(kb, []gotdbot.InlineKeyboardButton{
-			{Text: repo.GetFullName(), Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:ar:id:%d", repo.GetID())}},
-		})
+	sent, err := m.ReplyRichMessageHTML(c, settings.DiscoveryPage(repos, resp, page), nil)
+	if err == nil {
+		h.MenuOwners.Cleanup()
+		h.MenuOwners.Set([2]int64{sent.ChatId, sent.Id}, m.SenderID(), 30*time.Minute)
 	}
-
-	var navRow []gotdbot.InlineKeyboardButton
-
-	if resp.FirstPage != 0 && resp.PrevPage != 0 {
-		navRow = append(navRow, gotdbot.InlineKeyboardButton{Text: "Previous", Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:ar:pg:%d", resp.PrevPage)}})
-	}
-
-	startPage := max(page-1, 1)
-	endPage := page
-	if resp.NextPage != 0 {
-		endPage = resp.NextPage
-	}
-	if resp.LastPage != 0 && endPage > resp.LastPage {
-		endPage = resp.LastPage
-	}
-
-	if resp.LastPage == 0 && resp.NextPage != 0 {
-		endPage = resp.NextPage
-	}
-
-	for i := startPage; i <= endPage; i++ {
-		text := fmt.Sprintf("%d", i)
-		if i == page {
-			text = fmt.Sprintf("· %d ·", i)
-		}
-		navRow = append(navRow, gotdbot.InlineKeyboardButton{Text: text, Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:ar:pg:%d", i)}})
-	}
-
-	if resp.NextPage != 0 {
-		navRow = append(navRow, gotdbot.InlineKeyboardButton{Text: "Next", Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:ar:pg:%d", resp.NextPage)}})
-	}
-
-	if len(navRow) > 0 {
-		kb = append(kb, navRow)
-	}
-
-	_, err = m.ReplyText(c, fmt.Sprintf("<b>Link a repository</b>\n\nChoose a repository · Page %d", page), &gotdbot.SendMessageOpts{
-		ParseMode:             gotdbot.ParseModeHTML,
-		ReplyMarkup:           &gotdbot.ReplyMarkupInlineKeyboard{Rows: kb},
-		DisableWebPagePreview: true})
 	return err
 }
 
@@ -344,22 +307,11 @@ func (h *CommandHandler) Settings(c *gotdbot.Client, m *gotdbot.Message) error {
 		return replyErr
 	}
 
-	if len(links) == 0 {
-		_, err = m.ReplyText(c, "No repositories linked. Use /addrepo to link one.", nil)
-		return err
+	sent, err := m.ReplyRichMessageHTML(c, settings.RepositoryPage(links, 1), nil)
+	if err == nil {
+		h.MenuOwners.Cleanup()
+		h.MenuOwners.Set([2]int64{sent.ChatId, sent.Id}, m.SenderID(), 30*time.Minute)
 	}
-
-	var kb [][]gotdbot.InlineKeyboardButton
-	for _, l := range links {
-		kb = append(kb, []gotdbot.InlineKeyboardButton{
-			{Text: l.RepoFullName, Type: &gotdbot.InlineKeyboardButtonTypeCallback{Data: fmt.Appendf(nil, "c:r:%s", l.RepoFullName)}},
-		})
-	}
-
-	_, err = m.ReplyText(c, "<b>Notification settings</b>\n\nChoose a repository.", &gotdbot.SendMessageOpts{
-		ParseMode:             gotdbot.ParseModeHTML,
-		ReplyMarkup:           &gotdbot.ReplyMarkupInlineKeyboard{Rows: kb},
-		DisableWebPagePreview: true})
 	return err
 }
 
@@ -443,17 +395,11 @@ func (h *CommandHandler) Repos(c *gotdbot.Client, m *gotdbot.Message) error {
 		return replyErr
 	}
 
-	if len(links) == 0 {
-		_, err = m.ReplyText(c, "No repositories linked. Use /addrepo to link one.", nil)
-		return err
+	sent, err := m.ReplyRichMessageHTML(c, settings.LinkedRepositoryPage(links, 1), nil)
+	if err == nil && len(links) > 100 {
+		h.MenuOwners.Cleanup()
+		h.MenuOwners.Set([2]int64{sent.ChatId, sent.Id}, m.SenderID(), 30*time.Minute)
 	}
-
-	var msg strings.Builder
-	for _, l := range links {
-		msg.WriteString(utils.Code(l.RepoFullName) + "\n")
-	}
-
-	_, err = m.ReplyText(c, utils.LimitHTML("<b>Linked repositories</b>\n\n"+msg.String(), utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
 	return err
 }
 
@@ -556,21 +502,16 @@ func (h *CommandHandler) Help(c *gotdbot.Client, m *gotdbot.Message) error {
 <code>/privacy</code> - View the privacy policy
 <code>/help</code> - Show this help menu`
 
-	// Keep the complete command reference available in two short messages.
-	var chunk strings.Builder
+	var rich strings.Builder
+	rich.WriteString("<h3>GitHub Bot commands</h3>")
 	for section := range strings.SplitSeq(msg, "\n\n") {
-		if chunk.Len()+len(section) > 3000 {
-			if _, err := m.ReplyText(c, chunk.String(), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true}); err != nil {
-				return err
-			}
-			chunk.Reset()
+		heading, body, ok := strings.Cut(section, "\n")
+		if !ok {
+			continue
 		}
-		if chunk.Len() > 0 {
-			chunk.WriteString("\n\n")
-		}
-		chunk.WriteString(section)
+		fmt.Fprintf(&rich, "<details><summary>%s</summary><p>%s</p></details>", heading, strings.ReplaceAll(body, "\n", "<br>"))
 	}
-	_, err := m.ReplyText(c, chunk.String(), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	_, err := m.ReplyRichMessageHTML(c, rich.String(), nil)
 	return err
 }
 
@@ -673,6 +614,10 @@ func (h *CommandHandler) Approve(c *gotdbot.Client, m *gotdbot.Message) error {
 		_, err := m.ReplyText(c, "Please use this command in reply to a notification.", nil)
 		return err
 	}
+	client, err := h.getAuthenticatedClient(c, m)
+	if err != nil {
+		return nil
+	}
 
 	key := fmt.Sprintf("%d:%d", m.ChatId, m.ReplyToMessageID())
 	mContext, found := h.ContextCache.Get(key)
@@ -684,11 +629,6 @@ func (h *CommandHandler) Approve(c *gotdbot.Client, m *gotdbot.Message) error {
 	if !strings.HasPrefix(mContext.Type, "pr") {
 		_, err := m.ReplyText(c, "This command requires a pull request. Reply to a recent pull request notification.", nil)
 		return err
-	}
-
-	client, err := h.getAuthenticatedClient(c, m)
-	if err != nil {
-		return nil
 	}
 
 	review := &github.PullRequestReviewRequest{
@@ -714,6 +654,10 @@ func (h *CommandHandler) handleIssueAction(c *gotdbot.Client, m *gotdbot.Message
 		_, err := m.ReplyText(c, "Please use this command in reply to a notification.", nil)
 		return err
 	}
+	client, err := h.getAuthenticatedClient(c, m)
+	if err != nil {
+		return nil
+	}
 
 	key := fmt.Sprintf("%d:%d", m.ChatId, m.ReplyToMessageID())
 	mContext, found := h.ContextCache.Get(key)
@@ -725,10 +669,6 @@ func (h *CommandHandler) handleIssueAction(c *gotdbot.Client, m *gotdbot.Message
 	if mContext.IssueNumber <= 0 || mContext.Type == "discussion" || mContext.Type == "discussion_comment" || mContext.Type == "workflow" {
 		_, err := m.ReplyText(c, "This action requires an issue or pull request. Reply to a recent issue or pull request notification.", nil)
 		return err
-	}
-	client, err := h.getAuthenticatedClient(c, m)
-	if err != nil {
-		return nil
 	}
 
 	req := github.UpdateIssueRequest{State: &state}
@@ -755,6 +695,12 @@ func (h *CommandHandler) handleIssueAction(c *gotdbot.Client, m *gotdbot.Message
 }
 
 func (h *CommandHandler) getAuthenticatedClient(c *gotdbot.Client, m *gotdbot.Message) (*github.Client, error) {
+	if m.ReplyToMessageID() != 0 {
+		replied, err := m.GetRepliedMessage(c)
+		if err != nil || replied == nil || c.Me == nil || replied.SenderID() != c.Me.Id || replied.ChatId != m.ChatId {
+			return nil, errors.New("reply is not a notification from this bot")
+		}
+	}
 	user, err := h.DB.GetUserByTelegramID(context.Background(), m.SenderID())
 	if err != nil && !errors.Is(err, mongo.ErrNoDocuments) {
 		c.Logger.Warnf("Could not load your GitHub connection: %s", utils.ErrorDetails(err))
@@ -862,7 +808,7 @@ func (h *CommandHandler) Me(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	msg := "<b>" + utils.Link("@"+user.GetLogin(), user.GetHTMLURL()) + "</b>"
+	msg := "<b>" + html.EscapeString("@"+user.GetLogin()) + "</b>"
 	if name := user.GetName(); name != "" {
 		msg += "\n" + html.EscapeString(name)
 	}
@@ -871,7 +817,11 @@ func (h *CommandHandler) Me(c *gotdbot.Client, m *gotdbot.Message) error {
 	}
 	msg += fmt.Sprintf("\n\n%d followers · %d following\n%d public repositories", user.GetFollowers(), user.GetFollowing(), user.GetPublicRepos())
 
-	_, err = m.ReplyText(c, utils.LimitHTML(msg, utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	msg = "<p>" + strings.ReplaceAll(utils.LimitHTML(msg, utils.MessageLimit), "\n", "<br>") + "</p>"
+	if target := utils.SafeURL(user.GetHTMLURL()); target != "" {
+		msg += `<tg-button-row align="left"><tg-button type="url" url="` + html.EscapeString(target) + `">GitHub profile</tg-button></tg-button-row>`
+	}
+	_, err = m.ReplyRichMessageHTML(c, msg, nil)
 	return err
 }
 
@@ -919,9 +869,9 @@ func (h *CommandHandler) Repo(c *gotdbot.Client, m *gotdbot.Message) error {
 		c.Logger.Warnf("Fetch repository pull request counts: %s", utils.ErrorDetails(err))
 	}
 
-	msg := "<b>" + utils.Link(repoInfo.GetFullName(), repoInfo.GetHTMLURL()) + "</b>"
+	msg := "<b>" + html.EscapeString(repoInfo.GetFullName()) + "</b>"
 	if desc := repoInfo.GetDescription(); desc != "" {
-		msg += "\n\n" + html.EscapeString(desc)
+		msg += "\n\n" + html.EscapeString(utils.Clip(desc, 1000))
 	}
 	visibility := "Public"
 	if repoInfo.GetPrivate() {
@@ -942,7 +892,15 @@ func (h *CommandHandler) Repo(c *gotdbot.Client, m *gotdbot.Message) error {
 		msg += "\nLicense: " + html.EscapeString(license)
 	}
 
-	_, err = m.ReplyText(c, utils.LimitHTML(msg, utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	msg = "<p>" + strings.ReplaceAll(utils.LimitHTML(msg, utils.MessageLimit), "\n", "<br>") + "</p>"
+	if target := utils.SafeURL(repoInfo.GetHTMLURL()); target != "" {
+		msg += `<tg-button-row align="left"><tg-button type="url" url="` + html.EscapeString(target) + `">Repository</tg-button>`
+		if repoInfo.GetHasIssues() {
+			msg += `<tg-button type="url" url="` + html.EscapeString(strings.TrimRight(target, "/")+"/issues") + `">Issues</tg-button>`
+		}
+		msg += `<tg-button type="url" url="` + html.EscapeString(strings.TrimRight(target, "/")+"/pulls") + `">Pull requests</tg-button></tg-button-row>`
+	}
+	_, err = m.ReplyRichMessageHTML(c, msg, nil)
 	return err
 }
 
@@ -1156,15 +1114,20 @@ func (h *CommandHandler) Contributors(c *gotdbot.Client, m *gotdbot.Message) err
 	}
 
 	var msg strings.Builder
-	msg.WriteString("<b>Contributors</b>\n" + utils.Code(owner+"/"+repo) + "\n\n")
+	msg.WriteString("<h3>Contributors</h3><p>" + utils.Code(owner+"/"+repo) + "</p>")
 	if len(contribs) == 0 {
-		msg.WriteString("No contributors found.")
+		msg.WriteString("<p>No contributors found.</p>")
 	}
-	for i, c := range contribs {
-		msg.WriteString(fmt.Sprintf("%d. %s · %d commits\n", i+1, utils.Link(c.GetLogin(), c.GetHTMLURL()), c.GetContributions()))
+	for _, contributor := range contribs {
+		label := html.EscapeString(utils.Clip(contributor.GetLogin(), 80))
+		if target := utils.SafeURL(contributor.GetHTMLURL()); target != "" {
+			label = `<tg-button type="url" url="` + html.EscapeString(target) + `">` + label + `</tg-button>`
+		}
+		fmt.Fprintf(&msg, "<p>%s · %d commits</p>", label, contributor.GetContributions())
 	}
-
-	_, err = m.ReplyText(c, utils.LimitHTML(msg.String(), utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	target := "https://github.com/" + url.PathEscape(owner) + "/" + url.PathEscape(repo) + "/graphs/contributors"
+	fmt.Fprintf(&msg, `<tg-button-row align="left"><tg-button type="url" url="%s">All contributors</tg-button></tg-button-row>`, html.EscapeString(target))
+	_, err = m.ReplyRichMessageHTML(c, msg.String(), nil)
 	return err
 }
 
@@ -1222,7 +1185,7 @@ func (h *CommandHandler) Branches(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	branches, _, err := client.Repositories.ListBranches(context.Background(), owner, repo, &github.BranchListOptions{
+	branches, resp, err := client.Repositories.ListBranches(context.Background(), owner, repo, &github.BranchListOptions{
 		PerPage: 20,
 	})
 	if err != nil {
@@ -1235,15 +1198,28 @@ func (h *CommandHandler) Branches(c *gotdbot.Client, m *gotdbot.Message) error {
 	}
 
 	var msg strings.Builder
-	msg.WriteString("<b>Branches</b>\n" + utils.Code(owner+"/"+repo) + "\n\n")
+	msg.WriteString("<h3>Branches</h3><p>" + utils.Code(owner+"/"+repo) + "</p>")
 	if len(branches) == 0 {
-		msg.WriteString("No branches found.")
+		msg.WriteString("<p>No branches found.</p>")
 	}
-	for _, br := range branches {
-		msg.WriteString(utils.Code(br.GetName()) + "\n")
+	for _, branch := range branches {
+		name := branch.GetName()
+		if name == "" {
+			continue
+		}
+		target := "https://github.com/" + url.PathEscape(owner) + "/" + url.PathEscape(repo) + "/tree/" + url.PathEscape(name)
+		fmt.Fprintf(&msg, `<p><tg-button type="url" url="%s">%s</tg-button>`, html.EscapeString(target), html.EscapeString(utils.Clip(name, 160)))
+		if branch.GetProtected() {
+			msg.WriteString(" · Protected")
+		}
+		msg.WriteString("</p>")
 	}
-
-	_, err = m.ReplyText(c, utils.LimitHTML(msg.String(), utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	if resp != nil && resp.NextPage != 0 {
+		fmt.Fprintf(&msg, "<footer>Showing the first %d branches.</footer>", len(branches))
+	}
+	target := "https://github.com/" + url.PathEscape(owner) + "/" + url.PathEscape(repo) + "/branches"
+	fmt.Fprintf(&msg, `<tg-button-row align="left"><tg-button type="url" url="%s">All branches</tg-button></tg-button-row>`, html.EscapeString(target))
+	_, err = m.ReplyRichMessageHTML(c, msg.String(), nil)
 	return err
 }
 
@@ -1289,7 +1265,11 @@ func (h *CommandHandler) Branch(c *gotdbot.Client, m *gotdbot.Message) error {
 		}
 	}
 
-	_, err = m.ReplyText(c, utils.LimitHTML(msg, utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	msg = "<p>" + strings.ReplaceAll(utils.LimitHTML(msg, utils.MessageLimit), "\n", "<br>") + "</p>"
+	if target := utils.SafeURL("https://github.com/" + url.PathEscape(owner) + "/" + url.PathEscape(repo) + "/tree/" + url.PathEscape(branch.GetName())); target != "" {
+		msg += `<tg-button-row align="left"><tg-button type="url" url="` + html.EscapeString(target) + `">View branch</tg-button></tg-button-row>`
+	}
+	_, err = m.ReplyRichMessageHTML(c, msg, nil)
 	return err
 }
 
@@ -2357,13 +2337,23 @@ func (h *CommandHandler) Commit(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	msg := "<b>" + utils.Link("Commit "+utils.ShortSHA(commit.GetSHA()), commit.GetHTMLURL()) + "</b>\n" + utils.Code(owner+"/"+repo)
+	msg := "<h3>Commit " + html.EscapeString(utils.ShortSHA(commit.GetSHA())) + "</h3><p>" + utils.Code(owner+"/"+repo)
 	if author := commit.GetCommit().GetAuthor().GetName(); author != "" {
-		msg += " · by " + html.EscapeString(author)
+		msg += " · by " + html.EscapeString(utils.Clip(author, 100))
 	}
-	msg += "\n\n" + html.EscapeString(commit.GetCommit().GetMessage())
-
-	_, err = m.ReplyText(c, utils.LimitHTML(msg, utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	msg += "</p>"
+	body := utils.Clip(commit.GetCommit().GetMessage(), 30000)
+	if len(body) > 1000 {
+		msg += "<details><summary>Commit message</summary>"
+	}
+	msg += "<p>" + strings.ReplaceAll(html.EscapeString(body), "\n", "<br>") + "</p>"
+	if len(body) > 1000 {
+		msg += "</details>"
+	}
+	if target := utils.SafeURL(commit.GetHTMLURL()); target != "" {
+		msg += `<tg-button-row align="left"><tg-button type="url" url="` + html.EscapeString(target) + `">View commit</tg-button></tg-button-row>`
+	}
+	_, err = m.ReplyRichMessageHTML(c, msg, nil)
 	return err
 }
 
@@ -2392,20 +2382,25 @@ func (h *CommandHandler) Commits(c *gotdbot.Client, m *gotdbot.Message) error {
 	}
 
 	var msg strings.Builder
-	msg.WriteString("<b>Recent commits</b>\n" + utils.Code(owner+"/"+repo) + "\n\n")
+	msg.WriteString("<h3>Recent commits</h3><p>" + utils.Code(owner+"/"+repo) + "</p>")
 	if len(commits) == 0 {
-		msg.WriteString("No commits found.")
+		msg.WriteString("<p>No commits found.</p>")
 	}
-	for _, c := range commits {
-		shortSHA := utils.ShortSHA(c.GetSHA())
-		msg.WriteString(fmt.Sprintf("- %s: %s", utils.Link(shortSHA, c.GetHTMLURL()), html.EscapeString(strings.Split(c.GetCommit().GetMessage(), "\n")[0])))
-		if author := c.GetCommit().GetAuthor().GetName(); author != "" {
-			msg.WriteString(" by " + html.EscapeString(author))
+	for _, commit := range commits {
+		label := html.EscapeString(utils.ShortSHA(commit.GetSHA()))
+		if target := utils.SafeURL(commit.GetHTMLURL()); target != "" {
+			label = `<tg-button type="url" url="` + html.EscapeString(target) + `">` + label + `</tg-button>`
 		}
-		msg.WriteByte('\n')
+		subject := strings.SplitN(commit.GetCommit().GetMessage(), "\n", 2)[0]
+		fmt.Fprintf(&msg, "<p>%s <b>%s</b>", label, html.EscapeString(utils.Clip(subject, 240)))
+		if author := commit.GetCommit().GetAuthor().GetName(); author != "" {
+			msg.WriteString("<br>by " + html.EscapeString(utils.Clip(author, 100)))
+		}
+		msg.WriteString("</p>")
 	}
-
-	_, err = m.ReplyText(c, utils.LimitHTML(msg.String(), utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	target := "https://github.com/" + url.PathEscape(owner) + "/" + url.PathEscape(repo) + "/commits"
+	fmt.Fprintf(&msg, `<tg-button-row align="left"><tg-button type="url" url="%s">Commit history</tg-button></tg-button-row>`, html.EscapeString(target))
+	_, err = m.ReplyRichMessageHTML(c, msg.String(), nil)
 	return err
 }
 
@@ -2439,10 +2434,14 @@ func (h *CommandHandler) Compare(c *gotdbot.Client, m *gotdbot.Message) error {
 		return nil
 	}
 
-	msg := "<b>" + utils.Link("Branch comparison", comp.GetHTMLURL()) + "</b>\n" + utils.Code(owner+"/"+repo) + "\n\n" + utils.Code(base) + " → " + utils.Code(head)
+	msg := "<b>Branch comparison</b>\n" + utils.Code(owner+"/"+repo) + "\n\n" + utils.Code(base) + " → " + utils.Code(head)
 	msg += fmt.Sprintf("\n%s\n%d ahead · %d behind · %d commits", html.EscapeString(comp.GetStatus()), comp.GetAheadBy(), comp.GetBehindBy(), comp.GetTotalCommits())
 
-	_, err = m.ReplyText(c, utils.LimitHTML(msg, utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	msg = "<p>" + strings.ReplaceAll(utils.LimitHTML(msg, utils.MessageLimit), "\n", "<br>") + "</p>"
+	if target := utils.SafeURL(comp.GetHTMLURL()); target != "" {
+		msg += `<tg-button-row align="left"><tg-button type="url" url="` + html.EscapeString(target) + `">Compare changes</tg-button></tg-button-row>`
+	}
+	_, err = m.ReplyRichMessageHTML(c, msg, nil)
 	return err
 }
 
@@ -2471,22 +2470,47 @@ func (h *CommandHandler) Actions(c *gotdbot.Client, m *gotdbot.Message) error {
 	}
 
 	var msg strings.Builder
-	msg.WriteString("<b>Workflow runs</b>\n" + utils.Code(owner+"/"+repo) + "\n\n")
-	if runs.GetTotalCount() == 0 {
-		msg.WriteString("No workflow runs found.")
+	msg.WriteString("<h3>Workflow runs</h3><p>" + utils.Code(owner+"/"+repo) + "</p>")
+	if runs == nil || len(runs.WorkflowRuns) == 0 {
+		msg.WriteString("<p>No workflow runs found.</p>")
 	} else {
 		for _, run := range runs.WorkflowRuns {
-			status := run.GetStatus()
-			conclusion := run.GetConclusion()
-			summary := status
-			if conclusion != "" {
-				summary = conclusion
+			summary := run.GetConclusion()
+			if summary == "" {
+				summary = run.GetStatus()
 			}
-			msg.WriteString(fmt.Sprintf("%s\n%s · %s\n\n", utils.Link(fmt.Sprintf("%s #%d", run.GetName(), run.GetRunNumber()), run.GetHTMLURL()), utils.Code(run.GetHeadBranch()), html.EscapeString(strings.ReplaceAll(summary, "_", " "))))
+			name := run.GetName()
+			if name == "" {
+				name = run.GetDisplayTitle()
+			}
+			if name == "" {
+				name = "Workflow run"
+			}
+			label := utils.Clip(name, 160)
+			if run.GetRunNumber() > 0 {
+				label += fmt.Sprintf(" #%d", run.GetRunNumber())
+			}
+			label = html.EscapeString(label)
+			if target := utils.SafeURL(run.GetHTMLURL()); target != "" {
+				label = `<tg-button type="url" url="` + html.EscapeString(target) + `">` + label + `</tg-button>`
+			}
+			fmt.Fprintf(&msg, "<p>%s", label)
+			var details []string
+			if branch := run.GetHeadBranch(); branch != "" {
+				details = append(details, utils.Code(utils.Clip(branch, 160)))
+			}
+			if summary != "" {
+				details = append(details, html.EscapeString(strings.ReplaceAll(utils.Clip(summary, 80), "_", " ")))
+			}
+			if len(details) > 0 {
+				msg.WriteString("<br>" + strings.Join(details, " · "))
+			}
+			msg.WriteString("</p>")
 		}
 	}
-
-	_, err = m.ReplyText(c, utils.LimitHTML(msg.String(), utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	target := "https://github.com/" + url.PathEscape(owner) + "/" + url.PathEscape(repo) + "/actions"
+	fmt.Fprintf(&msg, `<tg-button-row align="left"><tg-button type="url" url="%s">All workflow runs</tg-button></tg-button-row>`, html.EscapeString(target))
+	_, err = m.ReplyRichMessageHTML(c, msg.String(), nil)
 	return err
 }
 
@@ -2693,7 +2717,7 @@ func (h *CommandHandler) Release(c *gotdbot.Client, m *gotdbot.Message) error {
 		name = rel.GetName()
 	}
 
-	msg := "<b>" + utils.Link(name, rel.GetHTMLURL()) + "</b>\n" + utils.Code(owner+"/"+repo)
+	msg := "<b>" + html.EscapeString(name) + "</b>\n" + utils.Code(owner+"/"+repo)
 	if tag := rel.GetTagName(); tag != "" && tag != name {
 		msg += " · " + utils.Code(tag)
 	}
@@ -2702,13 +2726,17 @@ func (h *CommandHandler) Release(c *gotdbot.Client, m *gotdbot.Message) error {
 		msg += " · " + published.Format("2006-01-02 15:04 UTC")
 	}
 
+	button := ""
+	if target := utils.SafeURL(rel.GetHTMLURL()); target != "" {
+		button = `<tg-button-row align="left"><tg-button type="url" url="` + html.EscapeString(target) + `">View release</tg-button></tg-button-row>`
+	}
 	if body := rel.GetBody(); strings.TrimSpace(body) != "" {
-		richMarkdown := "<p>" + strings.ReplaceAll(msg, "\n", "<br>") + "</p>\n\n" + utils.GitHubMarkdown(utils.Clip(body, 8000), "https://github.com/"+owner+"/"+repo)
+		richMarkdown := "<p>" + strings.ReplaceAll(msg, "\n", "<br>") + "</p>\n\n" + utils.GitHubMarkdown(utils.Clip(body, 8000), "https://github.com/"+owner+"/"+repo) + "\n\n" + button
 		_, err = m.ReplyRichMessageMarkdown(c, richMarkdown, nil)
 		return err
 	}
 
-	_, err = m.ReplyRichMessageHTML(c, "<p>"+strings.ReplaceAll(msg, "\n", "<br>")+"</p>", nil)
+	_, err = m.ReplyRichMessageHTML(c, "<p>"+strings.ReplaceAll(msg, "\n", "<br>")+"</p>"+button, nil)
 	return err
 }
 
@@ -3083,16 +3111,28 @@ func (h *CommandHandler) Find(c *gotdbot.Client, m *gotdbot.Message) error {
 	}
 
 	var msg strings.Builder
-	msg.WriteString("<b>Search issues</b>\n" + utils.Code(owner+"/"+repo) + "\nQuery: " + utils.Code(keyword) + "\n\n")
+	msg.WriteString("<h3>Search issues</h3><p>" + utils.Code(owner+"/"+repo) + "<br>Query: " + utils.Code(utils.Clip(keyword, 240)) + "</p>")
 	if result.GetTotal() == 0 {
-		msg.WriteString("No issues found.")
+		msg.WriteString("<p>No issues found.</p>")
 	} else {
 		for _, issue := range result.Issues {
-			msg.WriteString(fmt.Sprintf("• <a href=\"%s\">#%d %s</a>\n", html.EscapeString(issue.GetHTMLURL()), issue.GetNumber(), html.EscapeString(issue.GetTitle())))
+			label := fmt.Sprintf("#%d", issue.GetNumber())
+			if target := utils.SafeURL(issue.GetHTMLURL()); target != "" {
+				label = `<tg-button type="url" url="` + html.EscapeString(target) + `">` + label + `</tg-button>`
+			}
+			fmt.Fprintf(&msg, "<p>%s <b>%s</b>", label, html.EscapeString(utils.Clip(issue.GetTitle(), 240)))
+			if state := issue.GetState(); state != "" {
+				msg.WriteString("<br>" + html.EscapeString(state))
+			}
+			msg.WriteString("</p>")
 		}
 	}
-
-	_, err = m.ReplyText(c, utils.LimitHTML(msg.String(), utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	if result.GetTotal() > 0 {
+		fmt.Fprintf(&msg, "<footer>Results: %d</footer>", result.GetTotal())
+	}
+	target := "https://github.com/search?" + url.Values{"q": {query}, "type": {"issues"}}.Encode()
+	fmt.Fprintf(&msg, `<tg-button-row align="left"><tg-button type="url" url="%s">Search on GitHub</tg-button></tg-button-row>`, html.EscapeString(target))
+	_, err = m.ReplyRichMessageHTML(c, msg.String(), nil)
 	return err
 }
 
@@ -3129,16 +3169,28 @@ func (h *CommandHandler) PRSearch(c *gotdbot.Client, m *gotdbot.Message) error {
 	}
 
 	var msg strings.Builder
-	msg.WriteString("<b>Search pull requests</b>\n" + utils.Code(owner+"/"+repo) + "\nQuery: " + utils.Code(keyword) + "\n\n")
+	msg.WriteString("<h3>Search pull requests</h3><p>" + utils.Code(owner+"/"+repo) + "<br>Query: " + utils.Code(utils.Clip(keyword, 240)) + "</p>")
 	if result.GetTotal() == 0 {
-		msg.WriteString("No PRs found.")
+		msg.WriteString("<p>No pull requests found.</p>")
 	} else {
-		for _, pr := range result.Issues {
-			msg.WriteString(fmt.Sprintf("• <a href=\"%s\">#%d %s</a>\n", html.EscapeString(pr.GetHTMLURL()), pr.GetNumber(), html.EscapeString(pr.GetTitle())))
+		for _, issue := range result.Issues {
+			label := fmt.Sprintf("#%d", issue.GetNumber())
+			if target := utils.SafeURL(issue.GetHTMLURL()); target != "" {
+				label = `<tg-button type="url" url="` + html.EscapeString(target) + `">` + label + `</tg-button>`
+			}
+			fmt.Fprintf(&msg, "<p>%s <b>%s</b>", label, html.EscapeString(utils.Clip(issue.GetTitle(), 240)))
+			if state := issue.GetState(); state != "" {
+				msg.WriteString("<br>" + html.EscapeString(state))
+			}
+			msg.WriteString("</p>")
 		}
 	}
-
-	_, err = m.ReplyText(c, utils.LimitHTML(msg.String(), utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	if result.GetTotal() > 0 {
+		fmt.Fprintf(&msg, "<footer>Results: %d</footer>", result.GetTotal())
+	}
+	target := "https://github.com/search?" + url.Values{"q": {query}, "type": {"pullrequests"}}.Encode()
+	fmt.Fprintf(&msg, `<tg-button-row align="left"><tg-button type="url" url="%s">Search on GitHub</tg-button></tg-button-row>`, html.EscapeString(target))
+	_, err = m.ReplyRichMessageHTML(c, msg.String(), nil)
 	return err
 }
 
@@ -3175,16 +3227,24 @@ func (h *CommandHandler) SearchCode(c *gotdbot.Client, m *gotdbot.Message) error
 	}
 
 	var msg strings.Builder
-	msg.WriteString("<b>Search code</b>\n" + utils.Code(owner+"/"+repo) + "\nQuery: " + utils.Code(keyword) + "\n\n")
+	msg.WriteString("<h3>Search code</h3><p>" + utils.Code(owner+"/"+repo) + "<br>Query: " + utils.Code(utils.Clip(keyword, 240)) + "</p>")
 	if result.GetTotal() == 0 {
-		msg.WriteString("No code results found.")
+		msg.WriteString("<p>No code results found.</p>")
 	} else {
 		for _, res := range result.CodeResults {
-			msg.WriteString(fmt.Sprintf("• <a href=\"%s\">%s</a> in <code>%s</code>\n", html.EscapeString(res.GetHTMLURL()), html.EscapeString(res.GetName()), html.EscapeString(res.GetPath())))
+			label := html.EscapeString(utils.Clip(res.GetName(), 160))
+			if target := utils.SafeURL(res.GetHTMLURL()); target != "" {
+				label = `<tg-button type="url" url="` + html.EscapeString(target) + `">` + label + `</tg-button>`
+			}
+			fmt.Fprintf(&msg, "<p>%s<br>%s</p>", label, utils.Code(utils.Clip(res.GetPath(), 240)))
 		}
 	}
-
-	_, err = m.ReplyText(c, utils.LimitHTML(msg.String(), utils.MessageLimit), &gotdbot.SendMessageOpts{ParseMode: gotdbot.ParseModeHTML, DisableWebPagePreview: true})
+	if result.GetTotal() > 0 {
+		fmt.Fprintf(&msg, "<footer>Results: %d</footer>", result.GetTotal())
+	}
+	target := "https://github.com/search?" + url.Values{"q": {query}, "type": {"code"}}.Encode()
+	fmt.Fprintf(&msg, `<tg-button-row align="left"><tg-button type="url" url="%s">Search on GitHub</tg-button></tg-button-row>`, html.EscapeString(target))
+	_, err = m.ReplyRichMessageHTML(c, msg.String(), nil)
 	return err
 }
 
