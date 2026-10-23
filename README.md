@@ -28,7 +28,7 @@ A robust Telegram bot that integrates with GitHub to send real-time event notifi
 *   **Issues**: Open, close, reopen, label, comment, assign, lock, pin, etc.
 *   **Pull Requests**: Open, close, review, approve, request changes, merge, draft status, check runs, etc.
 *   **GitHub Actions**: Workflow runs, workflow jobs
-*   **Releases & Discussions**: Release creation, discussion posts & answered comments
+*   **Releases & Discussions**: Release updates without duplicate publication alerts, discussion posts & answered comments
 *   **Wikis**: Gollum events
 *   **Settings**: Repository updates
 *   **Deploy Keys & Collaborators**: Member changes and access key management
@@ -123,6 +123,7 @@ OWNER_ID=123456789
 ## Usage
 
 1.  **Start the Bot**: Send `/start` in Telegram.
+    *   **Guest Mode** (optional): Enable **Guest Mode** in your bot's settings in BotFather's MiniApp. Mention the bot or reply to its guest message in a supported chat to receive one introduction with **Add to group** and **Open bot** buttons. Add the bot and link a repository for ongoing notifications.
 2.  **Connect GitHub**: Send `/connect` (in a private chat) to authenticate with your GitHub account via OAuth.
     *   For organization repositories, authorize GitHub first, then use **Organization access** in `/connect` to grant access or request organization-owner approval on GitHub. Your GitHub account also needs permission to manage repository webhooks. For SSO organizations, sign in through SSO before authorizing.
 3.  **Add Repositories**:

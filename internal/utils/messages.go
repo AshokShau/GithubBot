@@ -166,8 +166,7 @@ func OperationError(operation string, err error) string {
 }
 
 func ErrorDetails(err error) string {
-	var telegramError *gotdbot.Error
-	if errors.As(err, &telegramError) {
+	if telegramError, ok := errors.AsType[*gotdbot.Error](err); ok {
 		details := fmt.Sprintf("error_type=%T telegram_code=%d", err, telegramError.Code)
 		if telegramError.Code == 406 {
 			return details

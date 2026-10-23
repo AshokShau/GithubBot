@@ -3,7 +3,7 @@ module github-webhook
 go 1.27
 
 require (
-	github.com/AshokShau/gotdbot v0.9.7-0.20261014122449-a88c95766955
+	github.com/AshokShau/gotdbot v0.10.2-0.20261023123153-33c7e2898d89
 	github.com/google/go-github/v92 v92.0.0
 	github.com/joho/godotenv v1.5.1
 	go.mongodb.org/mongo-driver/v2 v2.9.2
@@ -12,7 +12,7 @@ require (
 )
 
 require (
-	github.com/ebitengine/purego v0.11.1 // indirect
+	github.com/ebitengine/purego v0.11.2 // indirect
 	github.com/google/go-querystring v1.2.0 // indirect
 	github.com/klauspost/compress v1.20.3 // indirect
 	github.com/xdg-go/pbkdf2 v1.0.0 // indirect

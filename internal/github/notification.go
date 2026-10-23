@@ -8,8 +8,8 @@ import (
 	"net/mail"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
-	"unicode/utf8"
 
 	"github-webhook/internal/utils"
 
@@ -21,6 +21,12 @@ type eventSpec struct {
 	title, resource string
 	fields          []string
 }
+
+const (
+	richMessageTextLimit = 32768
+	richHeaderLimit      = 3400
+	richBodyLimit        = richMessageTextLimit - richHeaderLimit - 128
+)
 
 var eventSpecs = map[string]eventSpec{
 	"status":                          {"Commit status", "", nil},
@@ -38,7 +44,7 @@ var eventSpecs = map[string]eventSpec{
 	"workflow_dispatch":               {"Workflow requested", "", []string{"workflow", "ref"}},
 	"check_run":                       {"Check run", "check_run", []string{"name", "head_sha", "status", "conclusion", "output.title", "output.summary"}},
 	"check_suite":                     {"Check suite", "check_suite", []string{"app.name", "head_branch", "head_sha", "status", "conclusion"}},
-	"release":                         {"Release", "release", []string{"tag_name", "target_commitish", "body"}},
+	"release":                         {"Release", "release", []string{"body"}},
 	"discussion":                      {"Discussion", "discussion", []string{"category.name", "state", "body"}},
 	"discussion_comment":              {"Discussion comment", "comment", []string{"body"}},
 	"deployment":                      {"Deployment", "deployment", []string{"environment", "ref", "sha", "description"}},
@@ -132,6 +138,7 @@ func firstURL(values ...string) string {
 }
 
 var repositoryNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9_.-]+$`)
+var commitSHAPattern = regexp.MustCompile(`^[a-fA-F0-9]{40}$`)
 var commitTrailerPattern = regexp.MustCompile(`^[A-Za-z0-9-]+:\s*.+$`)
 var githubNoreplyPattern = regexp.MustCompile(`(?i)^(?:[0-9]+\+)?([a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\[bot\])?)@users\.noreply\.github\.com$`)
 
@@ -187,6 +194,14 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 	heading := spec.title
 	if name == "issue_comment" && p.object("issue.pull_request") != nil {
 		heading = "Pull request comment"
+	}
+	if name == "release" {
+		if resource.value("prerelease") == true {
+			heading = "Prerelease"
+		}
+		if resource.value("draft") == true {
+			heading = "Draft " + strings.ToLower(heading)
+		}
 	}
 
 	if action != "" && !unsupportedAction {
@@ -252,6 +267,16 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 	title := resource.text("title")
 	if name == "release" {
 		title = cmp.Or(title, resource.text("name"))
+		tag := resource.text("tag_name")
+		hasTag := slices.ContainsFunc(strings.Fields(title), func(word string) bool {
+			return strings.Trim(word, "()[]{}:,;") == tag
+		})
+		if tag != "" && !hasTag {
+			if title != "" {
+				title += " · "
+			}
+			title += tag
+		}
 	}
 	if name == "workflow_run" || name == "workflow_job" || name == "check_run" {
 		title = resource.text("name")
@@ -265,11 +290,27 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 	if title = strings.TrimSpace(title); title != "" {
 		b.WriteString("<b>" + utils.Link(utils.Clip(title, 240), targetURL) + "</b>\n")
 	}
-	if repoName != "" {
-		b.WriteString(utils.Link(utils.Clip(repoName, 180), repoURL))
+	repoLabel, repoLink := repoName, repoURL
+	if name == "release" {
+		if ref := resource.text("target_commitish"); ref != "" {
+			label, path := ref, "/tree/"
+			if commitSHAPattern.MatchString(ref) {
+				label, path = utils.ShortSHA(ref), "/commit/"
+			}
+			if repoLabel != "" {
+				repoLabel += ":"
+			}
+			repoLabel += label
+			if repoURL != "" {
+				repoLink = repoURL + path + url.PathEscape(ref)
+			}
+		}
+	}
+	if repoLabel != "" {
+		b.WriteString(utils.Link(utils.Clip(repoLabel, 240), repoLink))
 	}
 	if actor != "" {
-		if repoName != "" {
+		if repoLabel != "" {
 			b.WriteString(" · ")
 		}
 		b.WriteString("by " + utils.Link(utils.Clip(actor, 100), p.text("sender.html_url")))
@@ -516,7 +557,7 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 					b.WriteString(": ")
 				}
 			}
-			b.WriteString("<b>" + utils.GitHubMarkdown(utils.Clip(subject, 220), repoURL) + "</b>")
+			b.WriteString(utils.LimitGitHubMarkdown(subject, repoURL, 220))
 			var credits []string
 			seen := make(map[string]bool)
 			contributors := append([]*gh.CommitAuthor{commit.GetAuthor()}, coauthors...)
@@ -571,7 +612,7 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 			b.WriteString("\n\n")
 			if description != "" {
 				b.WriteString("<details><summary><sup>ᴅᴇꜱᴄʀɪᴘᴛɪᴏɴ</sup></summary>\n\n" +
-					utils.GitHubMarkdown(utils.Clip(description, 1000/shown), repoURL) +
+					utils.LimitGitHubMarkdown(description, repoURL, 1000/shown) +
 					"\n\n</details>\n\n")
 			}
 		}
@@ -649,14 +690,8 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 			}
 		}
 	case "release":
-		if assets, ok := resource.value("assets").([]any); ok {
+		if assets := resource.list("assets"); len(assets) > 0 {
 			line("Assets", fmt.Sprintf("<b>%d</b>", len(assets)))
-		}
-		if resource.value("prerelease") == true {
-			line("Type", "Prerelease")
-		}
-		if resource.value("draft") == true {
-			line("State", "Draft")
 		}
 	case "repository":
 		line("Previous name", utils.Code(p.text("changes.repository.name.from")))
@@ -693,22 +728,19 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 
 	header := strings.TrimSpace(b.String())
 	if name != "push" {
-		header = utils.LimitHTML(header, 3400)
+		header = utils.LimitHTML(header, richHeaderLimit)
 		header = "<p>" + strings.ReplaceAll(header, "\n", "<br>") + "</p>"
 	}
-	message := &gotdbot.InputRichMessage{Source: &gotdbot.RichMessageSourceHtml{Text: header}}
+	message := &gotdbot.InputRichMessage{Source: &gotdbot.RichMessageSourceHtml{Text: header}, DetectAutomaticBlocks: true}
 	if name == "push" {
 		message.Source = &gotdbot.RichMessageSourceMarkdown{Text: header}
 	} else if strings.TrimSpace(excerpt) != "" {
-		content := utils.GitHubMarkdown(utils.Clip(excerpt, 8000), repoURL)
-		if utf8.RuneCountInString(excerpt) > 1000 {
-			summary := map[string]string{
-				"issues": "Issue details", "pull_request": "Pull request details", "pull_request_target": "Pull request details",
-				"issue_comment": "Comment", "pull_request_review_comment": "Review comment", "commit_comment": "Commit comment",
-				"pull_request_review": "Review", "release": "Release notes", "discussion": "Discussion", "discussion_comment": "Comment", "check_run": "Check output",
-			}[name]
-			content = "<details><summary>" + summary + "</summary>\n\n" + content + "\n\n</details>"
-		}
+		content := utils.LimitGitHubMarkdown(excerpt, repoURL, richBodyLimit)
+		summary := cmp.Or(map[string]string{
+			"issue_comment": "ᴄᴏᴍᴍᴇɴᴛ", "pull_request_review_comment": "ᴄᴏᴍᴍᴇɴᴛ", "commit_comment": "ᴄᴏᴍᴍᴇɴᴛ",
+			"pull_request_review": "ʀᴇᴠɪᴇᴡ", "release": "ʀᴇʟᴇᴀꜱᴇ ɴᴏᴛᴇꜱ", "discussion_comment": "ᴄᴏᴍᴍᴇɴᴛ", "check_run": "ᴄʜᴇᴄᴋ ᴏᴜᴛᴘᴜᴛ",
+		}[name], "ᴅᴇꜱᴄʀɪᴘᴛɪᴏɴ")
+		content = "<details><summary><sup>" + summary + "</sup></summary>\n\n" + content + "\n\n</details>"
 		message.Source = &gotdbot.RichMessageSourceMarkdown{Text: header + "\n\n" + content}
 	}
 

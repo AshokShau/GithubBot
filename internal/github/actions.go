@@ -1,6 +1,10 @@
 package github
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/google/go-github/v92/github"
+)
 
 // Unknown actions receive a neutral fallback; never infer a completed operation.
 var knownActions = map[string]string{
@@ -29,4 +33,16 @@ var knownActions = map[string]string{
 func knownAction(name, action string) bool {
 	actions, ok := knownActions[name]
 	return !ok || action == "" || strings.Contains(" "+actions+" ", " "+action+" ")
+}
+
+// Use published to avoid duplicate release announcements; keep draft creation.
+func redundantReleaseAction(event *github.ReleaseEvent) bool {
+	switch event.GetAction() {
+	case "created":
+		return event.GetRelease() != nil && !event.GetRelease().GetDraft()
+	case "prereleased", "released":
+		return true
+	default:
+		return false
+	}
 }

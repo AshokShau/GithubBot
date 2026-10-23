@@ -699,7 +699,7 @@ func (h *CommandHandler) handleIssueAction(c *gotdbot.Client, m *gotdbot.Message
 func (h *CommandHandler) getAuthenticatedClient(c *gotdbot.Client, m *gotdbot.Message) (*github.Client, error) {
 	if m.ReplyToMessageID() != 0 {
 		replied, err := m.GetRepliedMessage(c)
-		if err != nil || replied == nil || c.Me == nil || replied.SenderID() != c.Me.Id || replied.ChatId != m.ChatId {
+		if err != nil || replied == nil || replied.SenderID() != c.Me().Id || replied.ChatId != m.ChatId {
 			return nil, errors.New("reply is not a notification from this bot")
 		}
 	}
@@ -2393,7 +2393,7 @@ func (h *CommandHandler) Commits(c *gotdbot.Client, m *gotdbot.Message) error {
 		if target := utils.SafeURL(commit.GetHTMLURL()); target != "" {
 			label = `<tg-button type="url" url="` + html.EscapeString(target) + `">` + label + `</tg-button>`
 		}
-		subject := strings.SplitN(commit.GetCommit().GetMessage(), "\n", 2)[0]
+		subject, _, _ := strings.Cut(commit.GetCommit().GetMessage(), "\n")
 		fmt.Fprintf(&msg, "<p>%s <b>%s</b>", label, html.EscapeString(utils.Clip(subject, 240)))
 		if author := commit.GetCommit().GetAuthor().GetName(); author != "" {
 			msg.WriteString("<br>by " + html.EscapeString(utils.Clip(author, 100)))

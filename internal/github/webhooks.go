@@ -158,6 +158,12 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 	hookID, _ := strconv.ParseInt(r.Header.Get("X-GitHub-Hook-ID"), 10, 64)
 	deliveryID := r.Header.Get("X-GitHub-Delivery")
 	deliveryLogger := s.Bot.Logger.With("event", eventType, "chat_id", chatID, "topic_id", topicID, "hook_id", hookID, "delivery_id", fmt.Sprintf("%q", utils.Clip(deliveryID, 100)))
+	if release, ok := event.(*github.ReleaseEvent); ok && redundantReleaseAction(release) {
+		deliveryLogger.Info("Webhook skipped: release publication is notified by the published action", "action", action, "result", "filtered")
+		w.Header().Set("X-Webhook-Result", "filtered")
+		_, _ = fmt.Fprintln(w, "Release action skipped: publication notifications use the published action.")
+		return
+	}
 	key := fmt.Sprintf("%d:%d:%d:%s", chatID, topicID, hookID, deliveryID)
 	if deliveryID != "" {
 		state := s.beginDelivery(key)
@@ -314,6 +320,10 @@ func (s *WebhookServer) processEvent(event any, eventType string, payloadBytes [
 		return nil, fmt.Errorf("Telegram client is unavailable")
 	}
 	sentMsg, err := s.Bot.SendRichMessage(chatID, msg, opts)
+	if fallback := imageLinkFallback(msg, err); fallback != nil {
+		s.Bot.Logger.Info("Webhook image could not be loaded; retrying with image links")
+		sentMsg, err = s.Bot.SendRichMessage(chatID, fallback, opts)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -327,4 +337,23 @@ func (s *WebhookServer) processEvent(event any, eventType string, payloadBytes [
 		}
 	}
 	return sentMsg, nil
+}
+
+func imageLinkFallback(message *gotdbot.InputRichMessage, err error) *gotdbot.InputRichMessage {
+	telegramError, ok := errors.AsType[*gotdbot.Error](err)
+	if !ok || telegramError.Code != 400 || !strings.HasPrefix(telegramError.Message, "RICH_MESSAGE_PHOTO_") {
+		return nil
+	}
+	source, ok := message.Source.(*gotdbot.RichMessageSourceMarkdown)
+	if !ok {
+		return nil
+	}
+	text := utils.GitHubMarkdownImageLinks(source.Text)
+	if text == source.Text {
+		return nil
+	}
+	fallback, fallbackSource := *message, *source
+	fallbackSource.Text = text
+	fallback.Source = &fallbackSource
+	return &fallback
 }

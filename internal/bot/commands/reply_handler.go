@@ -45,7 +45,7 @@ func (h *ReplyHandler) HandleReply(c *gotdbot.Client, msg *gotdbot.Message) erro
 		return nil
 	}
 	replied, replyErr := msg.GetRepliedMessage(c)
-	if replyErr != nil || replied == nil || c.Me == nil || replied.SenderID() != c.Me.Id || replied.ChatId != msg.ChatId {
+	if replyErr != nil || replied == nil || replied.SenderID() != c.Me().Id || replied.ChatId != msg.ChatId {
 		return nil
 	}
 
