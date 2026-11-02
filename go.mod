@@ -7,7 +7,7 @@ require (
 	github.com/google/go-github/v92 v92.0.0
 	github.com/joho/godotenv v1.5.1
 	go.mongodb.org/mongo-driver/v2 v2.9.2
-	golang.org/x/net v0.61.0
+	golang.org/x/net v0.61.1-0.20261013155913-7e562009b388
 	golang.org/x/oauth2 v0.37.0
 )
 

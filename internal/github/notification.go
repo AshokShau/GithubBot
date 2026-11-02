@@ -169,6 +169,86 @@ func parseCommitMessage(message string) (subject, description string, coauthors 
 	return
 }
 
+func formatCommitDescription(description string) string {
+	lines := strings.Split(description, "\n")
+	hasSquashCommits := false
+	for _, line := range lines {
+		if strings.HasPrefix(line, "* ") {
+			hasSquashCommits = true
+			break
+		}
+	}
+	if !hasSquashCommits {
+		return description
+	}
+
+	var out []string
+	inCommit := false
+	inFence := false
+	var fence string
+	skipBlank := false
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			marker := trimmed[:3]
+			if inFence && strings.HasPrefix(trimmed, fence) {
+				inFence = false
+				fence = ""
+			} else if !inFence {
+				inFence = true
+				fence = marker
+			}
+			out = append(out, line)
+			skipBlank = false
+			continue
+		}
+
+		if inFence {
+			out = append(out, line)
+			continue
+		}
+
+		if strings.HasPrefix(line, "* ") {
+			inCommit = true
+			skipBlank = true
+			out = append(out, line)
+			continue
+		}
+
+		if inCommit {
+			if trimmed == "" {
+				if skipBlank {
+					nextIsSubBullet := false
+					for j := i + 1; j < len(lines); j++ {
+						tj := strings.TrimSpace(lines[j])
+						if tj != "" {
+							if strings.HasPrefix(tj, "- ") || strings.HasPrefix(tj, "+ ") {
+								nextIsSubBullet = true
+							}
+							break
+						}
+					}
+					if nextIsSubBullet {
+						continue
+					}
+				}
+				out = append(out, "")
+				continue
+			}
+			skipBlank = false
+			if strings.HasPrefix(line, "  ") || strings.HasPrefix(line, "\t") {
+				out = append(out, line)
+			} else {
+				out = append(out, "  "+line)
+			}
+		} else {
+			out = append(out, line)
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
 func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.ReplyMarkupInlineKeyboard) {
 	spec, ok := eventSpecs[name]
 	if !ok {
@@ -611,8 +691,13 @@ func formatEvent(name string, body []byte) (*gotdbot.InputRichMessage, *gotdbot.
 			}
 			b.WriteString("\n\n")
 			if description != "" {
+				descLimit := 1000 / shown
+				if shown == 1 {
+					descLimit = richHeaderLimit - 900
+				}
+				formattedDesc := formatCommitDescription(description)
 				b.WriteString("<details><summary><sup>ᴅᴇꜱᴄʀɪᴘᴛɪᴏɴ</sup></summary>\n\n" +
-					utils.LimitGitHubMarkdown(description, repoURL, 1000/shown) +
+					utils.LimitGitHubMarkdown(formattedDesc, repoURL, descLimit) +
 					"\n\n</details>\n\n")
 			}
 		}
