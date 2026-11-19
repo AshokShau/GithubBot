@@ -144,8 +144,6 @@ func main() {
 	registerCommand("pr", cmdHandler.PRSearch)
 	registerCommand("search", cmdHandler.SearchCode)
 
-	registerCommand("mute", cmdHandler.Mute)
-	registerCommand("unmute", cmdHandler.Unmute)
 	registerCommand("done", cmdHandler.Done)
 	registerCommand("read", cmdHandler.Read)
 	registerCommand("stats", cmdHandler.Stats)

@@ -21,11 +21,10 @@ type RepoLink struct {
 
 // Chat represents a Telegram chat (group, channel, or private)
 type Chat struct {
-	ID           int64      `bson:"_id" json:"chat_id"`
-	ChatType     string     `bson:"chat_type" json:"chat_type"`
-	Title        string     `bson:"title" json:"title"`
-	Links        []RepoLink `bson:"links" json:"links"`
-	MutedThreads []int64    `bson:"muted_threads,omitempty" json:"muted_threads,omitempty"`
+	ID       int64      `bson:"_id" json:"chat_id"`
+	ChatType string     `bson:"chat_type" json:"chat_type"`
+	Title    string     `bson:"title" json:"title"`
+	Links    []RepoLink `bson:"links" json:"links"`
 }
 
 // Repository represents a GitHub repository where the App is installed

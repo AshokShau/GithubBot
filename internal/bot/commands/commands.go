@@ -491,8 +491,6 @@ func (h *CommandHandler) Help(c *gotdbot.Client, m *gotdbot.Message) error {
 <code>/search keyword</code> - Search repository code
 
 <b>Notifications &amp; Stats</b>
-<code>/mute</code> - Mute notifications in this chat/topic
-<code>/unmute</code> - Resume notifications in this chat/topic
 <code>/done</code> - Mark notification as done (reply to notification)
 <code>/read</code> - Mark notification as read (reply to notification)
 <code>/stats</code> - Repository statistics
@@ -3263,34 +3261,6 @@ func (h *CommandHandler) findNotificationThreadID(ctx context.Context, client *g
 		}
 	}
 	return "", errors.New("notification not found")
-}
-
-func (h *CommandHandler) Mute(c *gotdbot.Client, m *gotdbot.Message) error {
-	threadID := getTopicID(m)
-	err := h.DB.MuteThread(context.Background(), m.ChatId, threadID)
-	if err != nil {
-		c.Logger.Warnf("Could not mute notifications chat_id=%d topic_id=%d: %s", m.ChatId, threadID, utils.ErrorDetails(err))
-		_, replyErr := m.ReplyText(c, "Could not mute notifications. Please try again.", nil)
-		return replyErr
-	}
-
-	c.Logger.Infof("Notifications muted chat_id=%d topic_id=%d", m.ChatId, threadID)
-	_, err = m.ReplyText(c, "Notifications are muted here. Use /unmute to resume them.", nil)
-	return err
-}
-
-func (h *CommandHandler) Unmute(c *gotdbot.Client, m *gotdbot.Message) error {
-	threadID := getTopicID(m)
-	err := h.DB.UnmuteThread(context.Background(), m.ChatId, threadID)
-	if err != nil {
-		c.Logger.Warnf("Could not unmute notifications chat_id=%d topic_id=%d: %s", m.ChatId, threadID, utils.ErrorDetails(err))
-		_, replyErr := m.ReplyText(c, "Could not resume notifications. Please try again.", nil)
-		return replyErr
-	}
-
-	c.Logger.Infof("Notifications unmuted chat_id=%d topic_id=%d", m.ChatId, threadID)
-	_, err = m.ReplyText(c, "Notifications are enabled here.", nil)
-	return err
 }
 
 func (h *CommandHandler) Done(c *gotdbot.Client, m *gotdbot.Message) error {

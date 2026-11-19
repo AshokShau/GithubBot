@@ -9,7 +9,6 @@ import (
 	"io"
 	"mime"
 	"net/http"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -182,20 +181,16 @@ func (s *WebhookServer) Handler(w http.ResponseWriter, r *http.Request) {
 	}
 	deliveryLogger.Info("Webhook processing started")
 	sentMsg, err := s.processEvent(event, eventType, payloadBytes, chatID, int32(topicID), hookID)
+	if err == nil && sentMsg == nil {
+		err = errors.New("webhook processing completed without a sent message")
+	}
 	if deliveryID != "" {
-		// Muted deliveries remain eligible for explicit redelivery after /unmute.
-		s.finishDelivery(key, err == nil && sentMsg != nil)
+		s.finishDelivery(key, err == nil)
 	}
 	if err != nil {
 		deliveryLogger.Warnf("Webhook processing failed: %s", utils.ErrorDetails(err))
 		w.Header().Set("X-Webhook-Result", "failed")
 		http.Error(w, "Webhook processing failed. Redeliver this event after resolving the delivery problem.", http.StatusBadGateway)
-		return
-	}
-	if sentMsg == nil {
-		deliveryLogger.Info("Webhook skipped: notifications are muted; use /unmute in this chat/topic", "result", "muted")
-		w.Header().Set("X-Webhook-Result", "muted")
-		_, _ = fmt.Fprintf(w, "Notifications are muted for Telegram chat %d, topic %d. Use /unmute there to resume notifications.\n", chatID, topicID)
 		return
 	}
 	deliveryLogger.Info("Webhook notification sent", "result", "sent", "message_id", sentMsg.Id, "telegram_chat_id", sentMsg.ChatId)
@@ -282,15 +277,6 @@ func (s *WebhookServer) logMalformed(stage string, err error) {
 }
 
 func (s *WebhookServer) processEvent(event any, eventType string, payloadBytes []byte, chatID int64, topicID int32, hookID int64) (*gotdbot.Message, error) {
-	if s.DB != nil {
-		chat, err := s.DB.GetChat(context.Background(), chatID)
-		if err != nil {
-			return nil, err
-		}
-		if chat != nil && slices.Contains(chat.MutedThreads, int64(topicID)) {
-			return nil, nil
-		}
-	}
 	if repositoryEvent, ok := event.(*github.RepositoryEvent); ok && repositoryEvent.GetAction() == "renamed" && hookID != 0 && s.DB != nil {
 		newName := repositoryEvent.GetRepo().GetFullName()
 		if newName != "" {
